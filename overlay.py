@@ -17,6 +17,8 @@ RULER_BG = (0.10, 0.10, 0.10, 0.92)
 TICK_COLOR = (0.65, 0.65, 0.65, 1.0)
 LABEL_COLOR = (0.75, 0.75, 0.75, 1.0)
 GUIDE_COLOR = (0.15, 0.55, 1.0, 0.85)
+GRID_COLOR = (0.15, 0.15, 0.15, 0.55)
+PIXEL_GRID_ALPHA = 0.25
 _STEPS = (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
 
 ExtraDraw = Callable[[bpy.types.Region, bpy.types.Image], None]
@@ -93,6 +95,41 @@ def _minor_for(step: int, px_per_pixel: float) -> int:
     return minor
 
 
+def _grid_points(
+    region: bpy.types.Region, image: bpy.types.Image, spacing: int
+) -> list[tuple[float, float]]:
+    width, height = image.size
+    origin = image_to_region(region, image, 0.0, 0.0)
+    corner = image_to_region(region, image, width, height)
+    left, bottom = region_to_image(region, image, 0.0, 0.0)
+    right, top = region_to_image(region, image, region.width, region.height)
+    points: list[tuple[float, float]] = []
+    first = max(0, math.floor(left / spacing) * spacing)
+    for value in range(first, min(width, math.ceil(right)) + 1, spacing):
+        rx, _ = image_to_region(region, image, value, 0.0)
+        points += [(rx, origin[1]), (rx, corner[1])]
+    first = max(0, math.floor(bottom / spacing) * spacing)
+    for value in range(first, min(height, math.ceil(top)) + 1, spacing):
+        _, ry = image_to_region(region, image, 0.0, value)
+        points += [(origin[0], ry), (corner[0], ry)]
+    return points
+
+
+def _draw_grid(region: bpy.types.Region, image: bpy.types.Image, scene: bpy.types.Scene) -> None:
+    origin = image_to_region(region, image, 0.0, 0.0)
+    corner = image_to_region(region, image, image.size[0], image.size[1])
+    ppp = (corner[0] - origin[0]) / image.size[0]
+    scale = ui_scale()
+    if props.show_pixel_grid(scene):
+        fade = min((ppp - 4.0 * scale) / (4.0 * scale), 1.0)
+        if fade > 0.0:
+            color = (*GRID_COLOR[:3], PIXEL_GRID_ALPHA * fade)
+            draw_lines(_grid_points(region, image, 1), color)
+    divisions = props.grid_divisions(scene)
+    if divisions > 0 and divisions * ppp >= 8.0 * scale:
+        draw_lines(_grid_points(region, image, divisions), GRID_COLOR)
+
+
 def _draw_guides(region: bpy.types.Region, image: bpy.types.Image) -> None:
     points: list[tuple[float, float]] = []
     for guide in props.guides(image):
@@ -162,6 +199,7 @@ def _draw() -> None:
     if image.size[0] == 0 or image.size[1] == 0:
         return
     gpu.state.blend_set("ALPHA")
+    _draw_grid(region, image, scene)
     if props.show_guides(scene):
         _draw_guides(region, image)
     for draw_fn in extra_draws:
@@ -171,11 +209,48 @@ def _draw() -> None:
     gpu.state.blend_set("NONE")
 
 
+def _disable_native_grid() -> None:
+    window_manager = bpy.context.window_manager
+    if window_manager is None:
+        return
+    for window in window_manager.windows:
+        for area in window.screen.areas:
+            if area.type != "IMAGE_EDITOR":
+                continue
+            for space in area.spaces:
+                if space.type == "IMAGE_EDITOR":
+                    editor = cast(bpy.types.SpaceImageEditor, space)
+                    editor.uv_editor.show_grid_over_image = False
+
+
+def _pixel_grid_update(self: Any, context: bpy.types.Context) -> None:
+    if self.blix_show_pixel_grid:
+        _disable_native_grid()
+
+
+def _sync_grid_once() -> None:
+    _disable_native_grid()
+
+
 def register() -> None:
     global _handler
     scene_cls = cast(Any, bpy.types.Scene)
     scene_cls.blix_show_rulers = bpy.props.BoolProperty(name="Rulers", default=True)
     scene_cls.blix_show_guides = bpy.props.BoolProperty(name="Guides", default=True)
+    scene_cls.blix_show_pixel_grid = bpy.props.BoolProperty(
+        name="Pixel Grid",
+        description="Draw grid line on every pixel boundary",
+        default=True,
+        update=_pixel_grid_update,
+    )
+    scene_cls.blix_grid_divisions = bpy.props.IntProperty(
+        name="Divisions",
+        description="Pixels between Blix major grid lines, 0 disables",
+        default=10,
+        min=0,
+        soft_max=64,
+    )
+    bpy.app.timers.register(_sync_grid_once)
     _handler = bpy.types.SpaceImageEditor.draw_handler_add(_draw, (), "WINDOW", "POST_PIXEL")
 
 
@@ -184,6 +259,10 @@ def unregister() -> None:
     if _handler is not None:
         bpy.types.SpaceImageEditor.draw_handler_remove(_handler, "WINDOW")
         _handler = None
+    if bpy.app.timers.is_registered(_sync_grid_once):
+        bpy.app.timers.unregister(_sync_grid_once)
     scene_cls = cast(Any, bpy.types.Scene)
+    del scene_cls.blix_grid_divisions
+    del scene_cls.blix_show_pixel_grid
     del scene_cls.blix_show_guides
     del scene_cls.blix_show_rulers

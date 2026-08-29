@@ -18,14 +18,13 @@ class BLIX_PT_grid(bpy.types.Panel):
     bl_label = "Pixel Grid"
 
     def draw(self, context: bpy.types.Context) -> None:
-        uv_editor = _space(context).uv_editor
         layout = self.layout
+        scene = context.scene
         assert layout is not None
+        assert scene is not None
         col = layout.column()
-        col.prop(uv_editor, "grid_shape_source", text="Shape")
-        col.prop(uv_editor, "show_grid_over_image", text="Over Image")
-        if uv_editor.grid_shape_source == "FIXED":
-            col.prop(uv_editor, "custom_grid_subdivisions", text="Subdivisions")
+        col.prop(scene, "blix_show_pixel_grid")
+        col.prop(scene, "blix_grid_divisions", text="Major Every")
 
 
 class BLIX_UL_guides(bpy.types.UIList):

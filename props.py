@@ -45,6 +45,14 @@ def show_guides(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_show_guides
 
 
+def show_pixel_grid(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_show_pixel_grid
+
+
+def grid_divisions(scene: bpy.types.Scene) -> int:
+    return int(cast(Any, scene).blix_grid_divisions)
+
+
 def dither_size(scene: bpy.types.Scene) -> int:
     return int(cast(Any, scene).blix_dither_size)
 
