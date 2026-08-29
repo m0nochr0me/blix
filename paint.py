@@ -12,6 +12,12 @@ def srgb_encode(color: np.ndarray) -> np.ndarray:
     ).astype(np.float32)
 
 
+def srgb_decode(color: np.ndarray) -> np.ndarray:
+    return np.where(color <= 0.04045, color / 12.92, np.power((color + 0.055) / 1.055, 2.4)).astype(
+        np.float32
+    )
+
+
 def brush_colors(context: bpy.types.Context) -> tuple[np.ndarray, np.ndarray]:
     primary = np.array([0.0, 0.0, 0.0], dtype=np.float32)
     secondary = np.array([1.0, 1.0, 1.0], dtype=np.float32)

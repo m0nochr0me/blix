@@ -218,6 +218,24 @@ class BLIX_PT_dither(bpy.types.Panel):
         col.prop(scene, "blix_dither_density")
 
 
+class BLIX_PT_palette(bpy.types.Panel):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Blix"
+    bl_label = "Palette"
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        tool_settings = context.tool_settings
+        assert layout is not None
+        assert tool_settings is not None
+        image_paint = tool_settings.image_paint
+        layout.operator("blix.palette_import", icon="IMPORT")
+        layout.template_ID(image_paint, "palette", new="palette.new")
+        if image_paint.palette is not None:
+            layout.template_palette(image_paint, "palette", color=True)
+
+
 _classes = (
     BLIX_PT_grid,
     BLIX_UL_guides,
@@ -228,6 +246,7 @@ _classes = (
     BLIX_UL_layers,
     BLIX_PT_layers,
     BLIX_PT_dither,
+    BLIX_PT_palette,
 )
 
 

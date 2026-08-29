@@ -104,6 +104,14 @@ colors — Ctrl snaps the direction to 45°. *Blix Dither Brush* paints a Bayer-
 paints the secondary color. Both honor an active selection as their bounds. Pattern size (2/4/8),
 brush size and density are in the Dither panel.
 
+### Palette
+
+*Import Hex Palette* in the Palette panel loads a `.hex` file — one hex code per line, `#` prefix
+optional — into a new palette named after the file and makes it the active image-paint palette.
+Lines that are not a 6-digit code are skipped and counted in the report. Codes are read as sRGB and
+decoded to scene linear, which is how Blender 5 stores brush and swatch colors, so a swatch paints
+back the exact source code on an 8-bit image.
+
 ## Preferences
 
 Edit > Preferences > Add-ons > Blix: guide, grid, ruler background, ruler text and mirror axis
