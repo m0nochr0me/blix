@@ -110,6 +110,7 @@ def sync_canvas(canvas: bpy.types.Image) -> None:
 def composite(canvas: bpy.types.Image) -> None:
     select.write_pixels(canvas, composite_pixels(canvas))
     _composite_cache[canvas.name] = select.read_pixels(canvas)
+    undo.defer(canvas)
 
 
 def _layer_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
