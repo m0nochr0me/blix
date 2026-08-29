@@ -70,18 +70,58 @@ def composite_pixels(canvas: bpy.types.Image) -> np.ndarray:
     return dest
 
 
+_composite_cache: dict[str, np.ndarray] = {}
+_sync_targets: dict[str, int] = {}
+
+
+def _sync_target(canvas: bpy.types.Image) -> Any:
+    stack = props.layers(canvas)
+    index = _sync_targets.get(canvas.name, props.layers_index(canvas))
+    if 0 <= index < len(stack):
+        return stack[index]
+    return active_layer(canvas)
+
+
+def sync_canvas(canvas: bpy.types.Image) -> None:
+    target = _sync_target(canvas)
+    _sync_targets[canvas.name] = props.layers_index(canvas)
+    cached = _composite_cache.get(canvas.name)
+    if cached is None:
+        return
+    current = select.read_pixels(canvas)
+    if cached.shape != current.shape:
+        _composite_cache.pop(canvas.name)
+        return
+    mask = np.any(current != cached, axis=2)
+    if not mask.any():
+        return
+    if target is None or target.image is None or target.lock:
+        return
+    if tuple(target.image.size) != (current.shape[1], current.shape[0]):
+        return
+    pixels = select.read_pixels(target.image)
+    pixels[mask] = current[mask]
+    select.write_pixels(target.image, pixels)
+    cached[mask] = current[mask]
+
+
 def composite(canvas: bpy.types.Image) -> None:
-    select.write_pixels(canvas, composite_pixels(canvas))
+    pixels = composite_pixels(canvas)
+    select.write_pixels(canvas, pixels)
+    _composite_cache[canvas.name] = pixels
 
 
 def _layer_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
     canvas = cast(bpy.types.Image, self.id_data)
     if len(props.layers(canvas)):
+        sync_canvas(canvas)
         composite(canvas)
         overlay.tag_redraw(context)
 
 
 def _active_changed(self: bpy.types.Image, context: bpy.types.Context) -> None:
+    if len(props.layers(self)):
+        sync_canvas(self)
     space = context.space_data
     if space is None or space.type != "IMAGE_EDITOR":
         return
@@ -139,14 +179,18 @@ def _new_layer_image(canvas: bpy.types.Image, name: str) -> bpy.types.Image:
 
 
 def init_layers(canvas: bpy.types.Image) -> None:
-    background = _clone_image(canvas, "Background", select.read_pixels(canvas))
+    pixels = select.read_pixels(canvas)
+    background = _clone_image(canvas, "Background", pixels)
     layer = props.layers(canvas).add()
     layer.name = "Background"
     layer.image = background
     props.set_layers_index(canvas, 0)
+    _composite_cache[canvas.name] = pixels
+    _sync_targets[canvas.name] = 0
 
 
 def add_layer(canvas: bpy.types.Image, name: str) -> None:
+    sync_canvas(canvas)
     stack = props.layers(canvas)
     layer = stack.add()
     layer.name = name
@@ -158,12 +202,14 @@ def add_layer(canvas: bpy.types.Image, name: str) -> None:
 
 def remove_layer(canvas: bpy.types.Image, index: int) -> None:
     stack = props.layers(canvas)
+    _composite_cache.pop(canvas.name, None)
     stack.remove(index)
     props.set_layers_index(canvas, min(index, len(stack) - 1))
     composite(canvas)
 
 
 def duplicate_layer(canvas: bpy.types.Image, index: int) -> None:
+    sync_canvas(canvas)
     stack = props.layers(canvas)
     source = stack[index]
     layer = stack.add()
@@ -178,6 +224,7 @@ def duplicate_layer(canvas: bpy.types.Image, index: int) -> None:
 
 
 def merge_down(canvas: bpy.types.Image, index: int) -> None:
+    sync_canvas(canvas)
     stack = props.layers(canvas)
     above = stack[index]
     below = stack[index + 1]
@@ -191,8 +238,10 @@ def merge_down(canvas: bpy.types.Image, index: int) -> None:
 
 
 def flatten(canvas: bpy.types.Image) -> None:
+    sync_canvas(canvas)
     pixels = composite_pixels(canvas)
     select.write_pixels(canvas, pixels)
+    _composite_cache[canvas.name] = pixels
     stack = props.layers(canvas)
     for layer in stack:
         if layer.image is not None:
@@ -204,6 +253,12 @@ def flatten(canvas: bpy.types.Image) -> None:
     select.write_pixels(layer.image, pixels)
     layer.image.pack()
     props.set_layers_index(canvas, 0)
+
+
+@persistent
+def _clear_cache(*_args: Any) -> None:
+    _composite_cache.clear()
+    _sync_targets.clear()
 
 
 @persistent
@@ -319,6 +374,7 @@ class BLIX_OT_layer_move(_CanvasOperator):
         target = index - 1 if self.up else index + 1
         if not 0 <= target < len(stack):
             return {"CANCELLED"}
+        sync_canvas(canvas)
         stack.move(index, target)
         props.set_layers_index(canvas, target)
         composite(canvas)
@@ -377,6 +433,7 @@ class BLIX_OT_layers_update(_CanvasOperator):
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         canvas = resolve_canvas(context)
         assert canvas is not None
+        sync_canvas(canvas)
         composite(canvas)
         overlay.tag_redraw(context)
         return {"FINISHED"}
@@ -397,6 +454,7 @@ class BLIX_OT_layer_view_toggle(_CanvasOperator):
             layer = active_layer(canvas)
             if layer is None or layer.image is None:
                 return {"CANCELLED"}
+            sync_canvas(canvas)
             space.image = layer.image
         else:
             composite(canvas)
@@ -427,10 +485,14 @@ def register() -> None:
     image_cls.blix_layers_index = bpy.props.IntProperty(default=0, update=_active_changed)
     image_cls.blix_canvas = bpy.props.PointerProperty(type=bpy.types.Image)
     bpy.app.handlers.save_pre.append(_pack_on_save)
+    bpy.app.handlers.load_post.append(_clear_cache)
 
 
 def unregister() -> None:
+    bpy.app.handlers.load_post.remove(_clear_cache)
     bpy.app.handlers.save_pre.remove(_pack_on_save)
+    _composite_cache.clear()
+    _sync_targets.clear()
     image_cls = cast(Any, bpy.types.Image)
     del image_cls.blix_canvas
     del image_cls.blix_layers_index
