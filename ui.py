@@ -75,7 +75,25 @@ class BLIX_PT_guides(bpy.types.Panel):
         col.operator("blix.guide_clear", text="", icon="X")
 
 
-_classes = (BLIX_PT_grid, BLIX_UL_guides, BLIX_PT_guides)
+class BLIX_PT_select(bpy.types.Panel):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Blix"
+    bl_label = "Selection"
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        assert layout is not None
+        row = layout.row(align=True)
+        cast(Any, row.operator("blix.select_rotate90", text="90 CCW")).turns = 1
+        cast(Any, row.operator("blix.select_rotate90", text="180")).turns = 2
+        cast(Any, row.operator("blix.select_rotate90", text="90 CW")).turns = 3
+        row = layout.row(align=True)
+        cast(Any, row.operator("blix.select_flip", text="Flip H")).horizontal = True
+        cast(Any, row.operator("blix.select_flip", text="Flip V")).horizontal = False
+
+
+_classes = (BLIX_PT_grid, BLIX_UL_guides, BLIX_PT_guides, BLIX_PT_select)
 
 
 def register() -> None:
