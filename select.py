@@ -8,7 +8,7 @@ import gpu
 import numpy as np
 from gpu_extras.batch import batch_for_shader
 
-from . import overlay, props
+from . import overlay, props, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
@@ -139,16 +139,14 @@ def clip_rect(
     return (x0, y0, x1, y1)
 
 
-def finish_float(
-    context: bpy.types.Context, image: bpy.types.Image, new_rect: Rect | None, message: str
-) -> None:
+def finish_float(context: bpy.types.Context, image: bpy.types.Image, new_rect: Rect | None) -> None:
     from . import layers
 
     session.rect = new_rect
     session.drop_float()
     if len(props.layers(image)):
         layers.composite(image)
-    cast(Any, bpy.ops.ed).undo_push(message=message)
+    undo.record(context, image)
     overlay.tag_redraw(context)
 
 
@@ -425,9 +423,10 @@ class BLIX_OT_select_move(bpy.types.Operator):
         x0, y0, x1, y1 = session.rect
         dx, dy = session.offset
         origin = (x0 + dx, y0 + dy)
+        undo.record(context, image)
         apply_buffer(image, session.rect, session.buffer, origin)
         new_rect = clip_rect(image, origin, (x1 - x0, y1 - y0))
-        finish_float(context, image, new_rect, "Blix Move Selection")
+        finish_float(context, image, new_rect)
 
 
 class BLIX_OT_select_clear(bpy.types.Operator):

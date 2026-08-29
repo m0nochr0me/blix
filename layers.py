@@ -1,12 +1,14 @@
 """Layer stack on a canvas Image with numpy compositing. Index 0 is the top layer."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 import bpy
 import numpy as np
 from bpy.app.handlers import persistent
 
-from . import overlay, props, select
+from . import overlay, props, select, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
@@ -230,7 +232,7 @@ def merge_down(canvas: bpy.types.Image, index: int) -> None:
     merged = blend_over(
         select.read_pixels(below.image), select.read_pixels(above.image), above.blend, above.opacity
     )
-    select.write_pixels(below.image, merged)
+    below.image = _clone_image(canvas, below.name, merged)
     stack.remove(index)
     props.set_layers_index(canvas, index)
     composite(canvas)
@@ -270,6 +272,17 @@ def _pack_on_save(*_args: Any) -> None:
                 layer.image.pack()
         if image.is_dirty:
             image.pack()
+
+
+@contextmanager
+def _undo_step(
+    context: bpy.types.Context, canvas: bpy.types.Image, message: str | None = None
+) -> Iterator[None]:
+    undo.record(context, canvas)
+    yield
+    undo.record(context, canvas)
+    if message is not None:
+        cast(Any, bpy.ops.ed).undo_push(message=message)
 
 
 class _CanvasOperator(bpy.types.Operator):
@@ -336,8 +349,8 @@ class BLIX_OT_layer_remove(_CanvasOperator):
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         canvas = resolve_canvas(context)
         assert canvas is not None
-        remove_layer(canvas, props.layers_index(canvas))
-        cast(Any, bpy.ops.ed).undo_push(message="Blix Remove Layer")
+        with _undo_step(context, canvas, "Blix Remove Layer"):
+            remove_layer(canvas, props.layers_index(canvas))
         return {"FINISHED"}
 
 
@@ -351,8 +364,8 @@ class BLIX_OT_layer_duplicate(_CanvasOperator):
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         canvas = resolve_canvas(context)
         assert canvas is not None
-        duplicate_layer(canvas, props.layers_index(canvas))
-        cast(Any, bpy.ops.ed).undo_push(message="Blix Duplicate Layer")
+        with _undo_step(context, canvas, "Blix Duplicate Layer"):
+            duplicate_layer(canvas, props.layers_index(canvas))
         return {"FINISHED"}
 
 
@@ -373,11 +386,11 @@ class BLIX_OT_layer_move(_CanvasOperator):
         target = index - 1 if self.up else index + 1
         if not 0 <= target < len(stack):
             return {"CANCELLED"}
-        sync_canvas(canvas)
-        stack.move(index, target)
-        props.set_layers_index(canvas, target)
-        composite(canvas)
-        cast(Any, bpy.ops.ed).undo_push(message="Blix Move Layer")
+        with _undo_step(context, canvas, "Blix Move Layer"):
+            sync_canvas(canvas)
+            stack.move(index, target)
+            props.set_layers_index(canvas, target)
+            composite(canvas)
         return {"FINISHED"}
 
 
@@ -402,8 +415,8 @@ class BLIX_OT_layer_merge_down(_CanvasOperator):
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         canvas = resolve_canvas(context)
         assert canvas is not None
-        merge_down(canvas, props.layers_index(canvas))
-        cast(Any, bpy.ops.ed).undo_push(message="Blix Merge Down")
+        with _undo_step(context, canvas, "Blix Merge Down"):
+            merge_down(canvas, props.layers_index(canvas))
         return {"FINISHED"}
 
 
@@ -417,8 +430,8 @@ class BLIX_OT_layer_flatten(_CanvasOperator):
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         canvas = resolve_canvas(context)
         assert canvas is not None
-        flatten(canvas)
-        cast(Any, bpy.ops.ed).undo_push(message="Blix Flatten")
+        with _undo_step(context, canvas, "Blix Flatten"):
+            flatten(canvas)
         return {"FINISHED"}
 
 
@@ -432,8 +445,9 @@ class BLIX_OT_layers_update(_CanvasOperator):
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         canvas = resolve_canvas(context)
         assert canvas is not None
-        sync_canvas(canvas)
-        composite(canvas)
+        with _undo_step(context, canvas):
+            sync_canvas(canvas)
+            composite(canvas)
         overlay.tag_redraw(context)
         return {"FINISHED"}
 
@@ -454,9 +468,11 @@ class BLIX_OT_layer_view_toggle(_CanvasOperator):
             if layer is None or layer.image is None:
                 return {"CANCELLED"}
             sync_canvas(canvas)
+            undo.record(context, layer.image)
             space.image = layer.image
         else:
-            composite(canvas)
+            with _undo_step(context, canvas):
+                composite(canvas)
             space.image = canvas
         overlay.tag_redraw(context)
         return {"FINISHED"}

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import bpy
 import numpy as np
 
-from . import overlay, select
+from . import overlay, select, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
@@ -74,12 +74,12 @@ def _commit_buffer(
     image: bpy.types.Image,
     rect: select.Rect,
     buffer: np.ndarray,
-    message: str,
 ) -> None:
     size = (buffer.shape[1], buffer.shape[0])
     origin = centered_origin(rect, size)
+    undo.record(context, image)
     select.apply_buffer(image, rect, buffer, origin)
-    select.finish_float(context, image, select.clip_rect(image, origin, size), message)
+    select.finish_float(context, image, select.clip_rect(image, origin, size))
 
 
 class BLIX_OT_select_flip(bpy.types.Operator):
@@ -100,8 +100,9 @@ class BLIX_OT_select_flip(bpy.types.Operator):
         rect = select.session.rect
         assert image is not None and rect is not None
         flipped = flip_buffer(select.lift(image, rect), self.horizontal)
+        undo.record(context, image)
         select.apply_buffer(image, rect, flipped, (rect[0], rect[1]))
-        select.finish_float(context, image, rect, "Blix Flip Selection")
+        select.finish_float(context, image, rect)
         return {"FINISHED"}
 
 
@@ -123,7 +124,7 @@ class BLIX_OT_select_rotate90(bpy.types.Operator):
         rect = select.session.rect
         assert image is not None and rect is not None
         rotated = rotate90_buffer(select.lift(image, rect), self.turns)
-        _commit_buffer(context, image, rect, rotated, "Blix Rotate Selection")
+        _commit_buffer(context, image, rect, rotated)
         return {"FINISHED"}
 
 
@@ -189,7 +190,7 @@ class BLIX_OT_select_scale(bpy.types.Operator):
             new_w = max(1, int(math.floor((rect[2] - rect[0]) * self._factor + 0.5)))
             new_h = max(1, int(math.floor((rect[3] - rect[1]) * self._factor + 0.5)))
             scaled = scale_buffer_nn(buffer, (new_w, new_h))
-            _commit_buffer(context, image, rect, scaled, "Blix Scale Selection")
+            _commit_buffer(context, image, rect, scaled)
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:
@@ -255,7 +256,7 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
             event.type in {"RET", "NUMPAD_ENTER"} and event.value == "PRESS"
         ):
             rotated = rotate_buffer_nn(select.session.buffer, self._angle)
-            _commit_buffer(context, image, rect, rotated, "Blix Rotate Selection")
+            _commit_buffer(context, image, rect, rotated)
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:

@@ -8,7 +8,7 @@ import bpy
 import gpu
 import numpy as np
 
-from . import overlay, props, select
+from . import overlay, props, select, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
@@ -223,9 +223,10 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
         pixels[rect[1] : rect[3], rect[0] : rect[2]] = dither_region(
             rect, self._start, self._end, color_a, color_b, props.dither_size(scene)
         )
+        undo.record(context, image)
         select.write_pixels(image, pixels)
         _clear_preview()
-        cast(Any, bpy.ops.ed).undo_push(message="Blix Dither Gradient")
+        undo.record(context, image)
         overlay.tag_redraw(context)
 
 
@@ -252,6 +253,7 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
         primary, secondary = _brush_colors(context)
         self._color = secondary if event.ctrl else primary
         self._last = select.mouse_pixel(region, image, event)
+        undo.record(context, image)
         self._stamp_to(context, image, self._last)
         window_manager = context.window_manager
         assert window_manager is not None
@@ -293,7 +295,7 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "RELEASE":
-            cast(Any, bpy.ops.ed).undo_push(message="Blix Dither Stroke")
+            undo.record(context, image)
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:
