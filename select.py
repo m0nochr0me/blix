@@ -8,7 +8,7 @@ import gpu
 import numpy as np
 from gpu_extras.batch import batch_for_shader
 
-from . import overlay
+from . import overlay, props
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
@@ -58,7 +58,29 @@ def can_float(context: bpy.types.Context) -> bool:
         and session.rect is not None
         and session.image_name == image.name
         and session.buffer is None
+        and not target_locked(image)
     )
+
+
+def pixel_target(image: bpy.types.Image) -> bpy.types.Image:
+    from . import layers
+
+    if len(props.layers(image)) == 0:
+        return image
+    layers.sync_canvas(image)
+    layer = layers.active_layer(image)
+    if layer is None or layer.image is None:
+        return image
+    return layer.image
+
+
+def target_locked(image: bpy.types.Image) -> bool:
+    from . import layers
+
+    if len(props.layers(image)) == 0:
+        return False
+    layer = layers.active_layer(image)
+    return layer is None or layer.image is None or layer.lock
 
 
 def read_pixels(image: bpy.types.Image) -> np.ndarray:
@@ -75,22 +97,23 @@ def write_pixels(image: bpy.types.Image, pixels: np.ndarray) -> None:
 
 def lift(image: bpy.types.Image, rect: Rect) -> np.ndarray:
     x0, y0, x1, y1 = rect
-    return read_pixels(image)[y0:y1, x0:x1].copy()
+    return read_pixels(pixel_target(image))[y0:y1, x0:x1].copy()
 
 
 def apply_buffer(
     image: bpy.types.Image, clear_rect: Rect, buffer: np.ndarray, origin: tuple[int, int]
 ) -> None:
-    pixels = read_pixels(image)
+    target = pixel_target(image)
+    pixels = read_pixels(target)
     x0, y0, x1, y1 = clear_rect
     pixels[y0:y1, x0:x1] = 0.0
     buf_h, buf_w = buffer.shape[:2]
     ox, oy = origin
-    width, height = image.size
+    width, height = target.size
     cx0, cy0 = max(ox, 0), max(oy, 0)
     cx1, cy1 = min(ox + buf_w, width), min(oy + buf_h, height)
     if cx0 >= cx1 or cy0 >= cy1:
-        write_pixels(image, pixels)
+        write_pixels(target, pixels)
         return
     sub = buffer[cy0 - oy : cy1 - oy, cx0 - ox : cx1 - ox]
     dst = pixels[cy0:cy1, cx0:cx1]
@@ -102,7 +125,7 @@ def apply_buffer(
         sub[:, :, :3] * src_a + dst[:, :, :3] * dst_a * (1.0 - src_a)
     ) / safe_a
     pixels[cy0:cy1, cx0:cx1, 3:4] = out_a
-    write_pixels(image, pixels)
+    write_pixels(target, pixels)
 
 
 def clip_rect(
@@ -119,8 +142,12 @@ def clip_rect(
 def finish_float(
     context: bpy.types.Context, image: bpy.types.Image, new_rect: Rect | None, message: str
 ) -> None:
+    from . import layers
+
     session.rect = new_rect
     session.drop_float()
+    if len(props.layers(image)):
+        layers.composite(image)
     cast(Any, bpy.ops.ed).undo_push(message=message)
     overlay.tag_redraw(context)
 
