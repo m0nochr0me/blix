@@ -1,3 +1,15 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.ruff-cache/
+.ruff_cache/
+.tmp-workspace/
+
+
 .env
 *.env
 !example*.env
@@ -10,5 +22,5 @@ CLAUDE.md
 DESIGN.md
 .mcp.json
 
-__pycache__/
+.venv/
 *.zip

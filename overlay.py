@@ -1,11 +1,14 @@
 """POST_PIXEL overlay drawing for image editor: rulers and guides."""
 
 import math
+from typing import Any, cast
 
 import blf
 import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
+
+from . import props
 
 RULER_PX = 20
 FONT_ID = 0
@@ -19,7 +22,9 @@ _handler = None
 
 
 def ui_scale() -> float:
-    return bpy.context.preferences.system.ui_scale
+    preferences = bpy.context.preferences
+    assert preferences is not None
+    return preferences.system.ui_scale
 
 
 def ruler_px() -> int:
@@ -41,9 +46,11 @@ def region_to_image(
 
 
 def tag_redraw(context: bpy.types.Context) -> None:
-    for window in context.window_manager.windows:
+    window_manager = context.window_manager
+    assert window_manager is not None
+    for window in window_manager.windows:
         for area in window.screen.areas:
-            if area.type == 'IMAGE_EDITOR':
+            if area.type == "IMAGE_EDITOR":
                 area.tag_redraw()
 
 
@@ -54,9 +61,9 @@ def _fill_rects(
     verts: list[tuple[float, float]] = []
     for x0, y0, x1, y1 in rects:
         verts += [(x0, y0), (x1, y0), (x0, y1), (x1, y0), (x1, y1), (x0, y1)]
-    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     shader.uniform_float("color", color)
-    batch_for_shader(shader, 'TRIS', {"pos": verts}).draw(shader)
+    batch_for_shader(shader, "TRIS", {"pos": verts}).draw(shader)
 
 
 def _draw_lines(
@@ -64,9 +71,9 @@ def _draw_lines(
 ) -> None:
     if not points:
         return
-    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     shader.uniform_float("color", color)
-    batch_for_shader(shader, 'LINES', {"pos": points}).draw(shader)
+    batch_for_shader(shader, "LINES", {"pos": points}).draw(shader)
 
 
 def _step_for(px_per_pixel: float) -> int:
@@ -86,8 +93,8 @@ def _minor_for(step: int, px_per_pixel: float) -> int:
 
 def _draw_guides(region: bpy.types.Region, image: bpy.types.Image) -> None:
     points: list[tuple[float, float]] = []
-    for guide in image.blix_guides:
-        if guide.orientation == 'VERTICAL':
+    for guide in props.guides(image):
+        if guide.orientation == "VERTICAL":
             rx, _ = image_to_region(region, image, guide.position, 0.0)
             points += [(rx, 0.0), (rx, region.height)]
         else:
@@ -146,29 +153,33 @@ def _draw_rulers(region: bpy.types.Region, image: bpy.types.Image) -> None:
 def _draw() -> None:
     context = bpy.context
     image = getattr(context.space_data, "image", None)
-    if image is None or image.size[0] == 0 or image.size[1] == 0:
-        return
     region = context.region
     scene = context.scene
-    gpu.state.blend_set('ALPHA')
-    if scene.blix_show_guides:
+    if image is None or region is None or scene is None:
+        return
+    if image.size[0] == 0 or image.size[1] == 0:
+        return
+    gpu.state.blend_set("ALPHA")
+    if props.show_guides(scene):
         _draw_guides(region, image)
-    if scene.blix_show_rulers:
+    if props.show_rulers(scene):
         _draw_rulers(region, image)
-    gpu.state.blend_set('NONE')
+    gpu.state.blend_set("NONE")
 
 
 def register() -> None:
     global _handler
-    bpy.types.Scene.blix_show_rulers = bpy.props.BoolProperty(name="Rulers", default=True)
-    bpy.types.Scene.blix_show_guides = bpy.props.BoolProperty(name="Guides", default=True)
-    _handler = bpy.types.SpaceImageEditor.draw_handler_add(_draw, (), 'WINDOW', 'POST_PIXEL')
+    scene_cls = cast(Any, bpy.types.Scene)
+    scene_cls.blix_show_rulers = bpy.props.BoolProperty(name="Rulers", default=True)
+    scene_cls.blix_show_guides = bpy.props.BoolProperty(name="Guides", default=True)
+    _handler = bpy.types.SpaceImageEditor.draw_handler_add(_draw, (), "WINDOW", "POST_PIXEL")
 
 
 def unregister() -> None:
     global _handler
     if _handler is not None:
-        bpy.types.SpaceImageEditor.draw_handler_remove(_handler, 'WINDOW')
+        bpy.types.SpaceImageEditor.draw_handler_remove(_handler, "WINDOW")
         _handler = None
-    del bpy.types.Scene.blix_show_guides
-    del bpy.types.Scene.blix_show_rulers
+    scene_cls = cast(Any, bpy.types.Scene)
+    del scene_cls.blix_show_guides
+    del scene_cls.blix_show_rulers

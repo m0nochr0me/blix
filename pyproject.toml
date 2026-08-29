@@ -1,0 +1,26 @@
+[project]
+name = "blix"
+version = "0.2.0"
+description = "Pixel-art editing tools for the Blender image editor"
+requires-python = ">=3.14"
+license = "GPL-3.0-or-later"
+
+[dependency-groups]
+dev = [
+  "fake-bpy-module",
+  "ruff",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "ANN"]
+ignore = ["ANN401"]
+
+[tool.ty.environment]
+root = [".."]
+
+[tool.ty.rules]
+invalid-type-form = "ignore"

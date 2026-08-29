@@ -29,4 +29,8 @@ paths_exclude_pattern = [
   "/.vscode/",
   "/.github/",
   "/*.env",
+  "/pyproject.toml",
+  "/uv.lock",
+  "/.venv/",
+  "/.ruff_cache/",
 ]
