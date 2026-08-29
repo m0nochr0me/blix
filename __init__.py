@@ -1,8 +1,8 @@
 """Blix: pixel-art editing tools for the Blender image editor."""
 
-from . import ui
+from . import guides, overlay, ui
 
-_modules = (ui,)
+_modules = (overlay, guides, ui)
 
 
 def register() -> None:
