@@ -21,7 +21,7 @@ class BlixGuide(bpy.types.PropertyGroup):
         ),
         default="VERTICAL",
     )
-    position: bpy.props.FloatProperty(name="Position", default=0.0)
+    position: bpy.props.IntProperty(name="Position", default=0)
 
 
 def _image(context: bpy.types.Context) -> bpy.types.Image | None:
@@ -123,7 +123,7 @@ class BLIX_OT_guide_clear(bpy.types.Operator):
 
 
 class BLIX_OT_guide_drag(bpy.types.Operator):
-    """Drag guide: create from ruler band, Ctrl grabs nearby guide, Shift disables snap"""
+    """Drag guide: create from ruler band, Ctrl grabs nearby guide"""
 
     bl_idname = "blix.guide_drag"
     bl_label = "Drag Guide"
@@ -131,7 +131,7 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
 
     _index: int
     _is_new: bool
-    _original: float
+    _original: int
 
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
@@ -171,7 +171,7 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
         guide.orientation = orientation
         self._index = len(props.guides(image)) - 1
         self._is_new = True
-        self._original = 0.0
+        self._original = 0
 
     def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
         image = _image(context)
@@ -186,7 +186,7 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
                 region, image, event.mouse_region_x, event.mouse_region_y
             )
             value = image.size[1] - y if guide.orientation == "HORIZONTAL" else x
-            guide.position = value if event.shift else round(value)
+            guide.position = round(value)
             overlay.tag_redraw(context)
             return {"RUNNING_MODAL"}
 

@@ -43,7 +43,10 @@ class BLIX_UL_guides(bpy.types.UIList):
         assert item is not None
         row = layout.row(align=True)
         axis = "Y" if item.orientation == "HORIZONTAL" else "X"
-        row.prop(item, "position", text=axis, emboss=False)
+        slot = index if index is not None else 0
+        same_axis = props.guides(cast(bpy.types.Image, data))[:slot]
+        number = sum(1 for other in same_axis if other.orientation == item.orientation) + 1
+        row.prop(item, "position", text=f"{axis}{number}", emboss=False)
 
 
 class BLIX_PT_guides(bpy.types.Panel):
@@ -64,11 +67,11 @@ class BLIX_PT_guides(bpy.types.Panel):
         image = _space(context).image
         if image is None:
             return
-        row = layout.row()
-        row.template_list(
+        split = layout.split(factor=0.9)
+        split.template_list(
             "BLIX_UL_guides", "", image, "blix_guides", image, "blix_guides_index", rows=3
         )
-        col = row.column(align=True)
+        col = split.column(align=True)
         cast(Any, col.operator("blix.guide_add", text="V")).orientation = "VERTICAL"
         cast(Any, col.operator("blix.guide_add", text="H")).orientation = "HORIZONTAL"
         col.separator()
