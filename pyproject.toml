@@ -8,6 +8,7 @@ license = "GPL-3.0-or-later"
 [dependency-groups]
 dev = [
   "fake-bpy-module",
+  "numpy>=2.5.2",
   "ruff",
 ]
 

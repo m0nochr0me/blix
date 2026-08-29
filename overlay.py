@@ -1,6 +1,7 @@
 """POST_PIXEL overlay drawing for image editor: rulers and guides."""
 
 import math
+from collections.abc import Callable
 from typing import Any, cast
 
 import blf
@@ -17,6 +18,9 @@ TICK_COLOR = (0.65, 0.65, 0.65, 1.0)
 LABEL_COLOR = (0.75, 0.75, 0.75, 1.0)
 GUIDE_COLOR = (0.15, 0.55, 1.0, 0.85)
 _STEPS = (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
+
+ExtraDraw = Callable[[bpy.types.Region, bpy.types.Image], None]
+extra_draws: list[ExtraDraw] = []
 
 _handler = None
 
@@ -54,7 +58,7 @@ def tag_redraw(context: bpy.types.Context) -> None:
                 area.tag_redraw()
 
 
-def _fill_rects(
+def fill_rects(
     rects: list[tuple[float, float, float, float]],
     color: tuple[float, float, float, float],
 ) -> None:
@@ -66,9 +70,7 @@ def _fill_rects(
     batch_for_shader(shader, "TRIS", {"pos": verts}).draw(shader)
 
 
-def _draw_lines(
-    points: list[tuple[float, float]], color: tuple[float, float, float, float]
-) -> None:
+def draw_lines(points: list[tuple[float, float]], color: tuple[float, float, float, float]) -> None:
     if not points:
         return
     shader = gpu.shader.from_builtin("UNIFORM_COLOR")
@@ -100,13 +102,13 @@ def _draw_guides(region: bpy.types.Region, image: bpy.types.Image) -> None:
         else:
             _, ry = image_to_region(region, image, 0.0, guide.position)
             points += [(0.0, ry), (region.width, ry)]
-    _draw_lines(points, GUIDE_COLOR)
+    draw_lines(points, GUIDE_COLOR)
 
 
 def _draw_rulers(region: bpy.types.Region, image: bpy.types.Image) -> None:
     band = ruler_px()
     rw, rh = region.width, region.height
-    _fill_rects([(0, rh - band, rw, rh), (0, 0, band, rh - band)], RULER_BG)
+    fill_rects([(0, rh - band, rw, rh), (0, 0, band, rh - band)], RULER_BG)
 
     origin = image_to_region(region, image, 0.0, 0.0)
     corner = image_to_region(region, image, image.size[0], image.size[1])
@@ -147,7 +149,7 @@ def _draw_rulers(region: bpy.types.Region, image: bpy.types.Image) -> None:
             blf.draw(FONT_ID, str(value))
     blf.disable(FONT_ID, blf.ROTATION)
 
-    _draw_lines(ticks, TICK_COLOR)
+    draw_lines(ticks, TICK_COLOR)
 
 
 def _draw() -> None:
@@ -162,6 +164,8 @@ def _draw() -> None:
     gpu.state.blend_set("ALPHA")
     if props.show_guides(scene):
         _draw_guides(region, image)
+    for draw_fn in extra_draws:
+        draw_fn(region, image)
     if props.show_rulers(scene):
         _draw_rulers(region, image)
     gpu.state.blend_set("NONE")
