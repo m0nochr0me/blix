@@ -1,0 +1,32 @@
+schema_version = "1.0.0"
+
+id = "blix"
+version = "0.1.0"
+name = "Blix"
+tagline = "Pixel-art editing tools for the image editor"
+maintainer = "m0nochr0me <m0nochr0mex@gmail.com>"
+type = "add-on"
+
+tags = ["Paint"]
+
+blender_version_min = "5.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "/.git/",
+  "/*.zip",
+  "/.gitignore",
+  "/README.md",
+  "/DESIGN.md",
+  "/CLAUDE.md",
+  "/.claude/",
+  "/.mcp.json",
+  "/.vscode/",
+  "/.github/",
+  "/*.env",
+]
