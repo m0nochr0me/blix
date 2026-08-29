@@ -37,6 +37,31 @@ def ruler_px() -> int:
     return round(RULER_PX * ui_scale())
 
 
+def ruler_offsets(area: bpy.types.Area | None, region: bpy.types.Region) -> tuple[int, int]:
+    left = 0
+    top = 0
+    if area is None:
+        return left, top
+    for other in area.regions:
+        if other.type not in {"TOOLS", "HEADER", "TOOL_HEADER"}:
+            continue
+        if other.width <= 1 or other.height <= 1:
+            continue
+        outside = (
+            other.x >= region.x + region.width
+            or other.x + other.width <= region.x
+            or other.y >= region.y + region.height
+            or other.y + other.height <= region.y
+        )
+        if outside:
+            continue
+        if other.type == "TOOLS":
+            left = max(left, other.x + other.width - region.x)
+        elif other.y > region.y + region.height // 2:
+            top = max(top, region.y + region.height - other.y)
+    return left, top
+
+
 def image_to_region(
     region: bpy.types.Region, image: bpy.types.Image, x: float, y: float
 ) -> tuple[int, int]:
@@ -108,9 +133,9 @@ def _grid_points(
     for value in range(first, min(width, math.ceil(right)) + 1, spacing):
         rx, _ = image_to_region(region, image, value, 0.0)
         points += [(rx, origin[1]), (rx, corner[1])]
-    first = max(0, math.floor(bottom / spacing) * spacing)
-    for value in range(first, min(height, math.ceil(top)) + 1, spacing):
-        _, ry = image_to_region(region, image, 0.0, value)
+    first = max(0, math.floor((height - top) / spacing) * spacing)
+    for value in range(first, min(height, math.ceil(height - bottom)) + 1, spacing):
+        _, ry = image_to_region(region, image, 0.0, height - value)
         points += [(origin[0], ry), (corner[0], ry)]
     return points
 
@@ -137,15 +162,23 @@ def _draw_guides(region: bpy.types.Region, image: bpy.types.Image) -> None:
             rx, _ = image_to_region(region, image, guide.position, 0.0)
             points += [(rx, 0.0), (rx, region.height)]
         else:
-            _, ry = image_to_region(region, image, 0.0, guide.position)
+            _, ry = image_to_region(region, image, 0.0, image.size[1] - guide.position)
             points += [(0.0, ry), (region.width, ry)]
     draw_lines(points, GUIDE_COLOR)
 
 
-def _draw_rulers(region: bpy.types.Region, image: bpy.types.Image) -> None:
+def _draw_rulers(
+    region: bpy.types.Region, image: bpy.types.Image, offsets: tuple[int, int]
+) -> None:
     band = ruler_px()
+    left_off, top_off = offsets
     rw, rh = region.width, region.height
-    fill_rects([(0, rh - band, rw, rh), (0, 0, band, rh - band)], RULER_BG)
+    band_top = rh - top_off
+    band_base = band_top - band
+    band_right = left_off + band
+    fill_rects(
+        [(left_off, band_base, rw, band_top), (left_off, 0, band_right, band_base)], RULER_BG
+    )
 
     origin = image_to_region(region, image, 0.0, 0.0)
     corner = image_to_region(region, image, image.size[0], image.size[1])
@@ -153,6 +186,7 @@ def _draw_rulers(region: bpy.types.Region, image: bpy.types.Image) -> None:
     ppp_y = max((corner[1] - origin[1]) / image.size[1], 1e-6)
     left, bottom = region_to_image(region, image, 0.0, 0.0)
     right, top = region_to_image(region, image, rw, rh)
+    height = image.size[1]
 
     scale = ui_scale()
     blf.size(FONT_ID, round(9 * scale))
@@ -163,26 +197,27 @@ def _draw_rulers(region: bpy.types.Region, image: bpy.types.Image) -> None:
     minor = _minor_for(step, ppp_x)
     for value in range(math.floor(left / minor) * minor, int(right) + minor, minor):
         rx, _ = image_to_region(region, image, value, 0.0)
-        if rx < band:
+        if rx < band_right:
             continue
         major = value % step == 0
-        ticks += [(rx, rh - band), (rx, rh - band + band * (0.55 if major else 0.28))]
+        ticks += [(rx, band_base), (rx, band_base + band * (0.55 if major else 0.28))]
         if major:
-            blf.position(FONT_ID, rx + 3 * scale, rh - band * 0.38, 0)
+            blf.position(FONT_ID, rx + 3 * scale, band_top - band * 0.38, 0)
             blf.draw(FONT_ID, str(value))
 
     step = _step_for(ppp_y)
     minor = _minor_for(step, ppp_y)
     blf.enable(FONT_ID, blf.ROTATION)
     blf.rotation(FONT_ID, math.pi / 2)
-    for value in range(math.floor(bottom / minor) * minor, int(top) + minor, minor):
-        _, ry = image_to_region(region, image, 0.0, value)
-        if ry > rh - band:
+    first = math.floor((height - top) / minor) * minor
+    for value in range(first, int(height - bottom) + minor, minor):
+        _, ry = image_to_region(region, image, 0.0, height - value)
+        if ry > band_base:
             continue
         major = value % step == 0
-        ticks += [(band, ry), (band - band * (0.55 if major else 0.28), ry)]
+        ticks += [(band_right, ry), (band_right - band * (0.55 if major else 0.28), ry)]
         if major:
-            blf.position(FONT_ID, band * 0.38, ry + 3 * scale, 0)
+            blf.position(FONT_ID, left_off + band * 0.38, ry + 3 * scale, 0)
             blf.draw(FONT_ID, str(value))
     blf.disable(FONT_ID, blf.ROTATION)
 
@@ -205,7 +240,7 @@ def _draw() -> None:
     for draw_fn in extra_draws:
         draw_fn(region, image)
     if props.show_rulers(scene):
-        _draw_rulers(region, image)
+        _draw_rulers(region, image, ruler_offsets(context.area, region))
     gpu.state.blend_set("NONE")
 
 

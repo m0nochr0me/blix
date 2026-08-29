@@ -39,7 +39,7 @@ def _find_near(region: bpy.types.Region, image: bpy.types.Image, mx: float, my: 
             gx, _ = overlay.image_to_region(region, image, guide.position, 0.0)
             dist = abs(mx - gx)
         else:
-            _, gy = overlay.image_to_region(region, image, 0.0, guide.position)
+            _, gy = overlay.image_to_region(region, image, 0.0, image.size[1] - guide.position)
             dist = abs(my - gy)
         if dist <= best_dist:
             best_dist = dist
@@ -144,6 +144,7 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
         assert region is not None
         mx, my = event.mouse_region_x, event.mouse_region_y
         band = overlay.ruler_px()
+        left_off, top_off = overlay.ruler_offsets(context.area, region)
         rulers = scene is not None and props.show_rulers(scene)
 
         if event.ctrl:
@@ -153,9 +154,9 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
             self._index = index
             self._is_new = False
             self._original = props.guides(image)[index].position
-        elif rulers and my >= region.height - band:
+        elif rulers and my >= region.height - top_off - band:
             self._start(image, "HORIZONTAL")
-        elif rulers and mx <= band:
+        elif rulers and mx <= left_off + band:
             self._start(image, "VERTICAL")
         else:
             return {"PASS_THROUGH"}
@@ -184,7 +185,7 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
             x, y = overlay.region_to_image(
                 region, image, event.mouse_region_x, event.mouse_region_y
             )
-            value = y if guide.orientation == "HORIZONTAL" else x
+            value = image.size[1] - y if guide.orientation == "HORIZONTAL" else x
             guide.position = value if event.shift else round(value)
             overlay.tag_redraw(context)
             return {"RUNNING_MODAL"}
