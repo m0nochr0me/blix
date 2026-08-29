@@ -161,6 +161,23 @@ class BLIX_PT_layers(bpy.types.Panel):
         layout.operator("blix.layers_update")
 
 
+class BLIX_PT_dither(bpy.types.Panel):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Blix"
+    bl_label = "Dither"
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        scene = context.scene
+        assert layout is not None
+        assert scene is not None
+        col = layout.column()
+        col.prop(scene, "blix_dither_size")
+        col.prop(scene, "blix_dither_brush_size")
+        col.prop(scene, "blix_dither_density")
+
+
 _classes = (
     BLIX_PT_grid,
     BLIX_UL_guides,
@@ -168,6 +185,7 @@ _classes = (
     BLIX_PT_select,
     BLIX_UL_layers,
     BLIX_PT_layers,
+    BLIX_PT_dither,
 )
 
 

@@ -43,3 +43,15 @@ def show_rulers(scene: bpy.types.Scene) -> bool:
 
 def show_guides(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_show_guides
+
+
+def dither_size(scene: bpy.types.Scene) -> int:
+    return int(cast(Any, scene).blix_dither_size)
+
+
+def dither_density(scene: bpy.types.Scene) -> float:
+    return cast(Any, scene).blix_dither_density
+
+
+def dither_brush_size(scene: bpy.types.Scene) -> int:
+    return cast(Any, scene).blix_dither_brush_size

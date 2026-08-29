@@ -209,14 +209,12 @@ def _draw_ants(corners: Quad) -> None:
     overlay.draw_lines(_dash_points(corners), ANTS_LIGHT)
 
 
-def _draw_buffer(corners: Quad) -> None:
-    if session.texture is None:
-        return
+def draw_texture_quad(corners: Quad, texture: gpu.types.GPUTexture) -> None:
     quad = [corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]]
     uvs = [(0, 0), (1, 0), (1, 1), (0, 0), (1, 1), (0, 1)]
     shader = _get_preview_shader()
     batch = batch_for_shader(shader, "TRIS", {"pos": quad, "uv": uvs})
-    shader.uniform_sampler("image", session.texture)
+    shader.uniform_sampler("image", texture)
     matrix = gpu.matrix.get_projection_matrix() @ gpu.matrix.get_model_view_matrix()
     shader.uniform_float("ModelViewProjectionMatrix", cast(Any, matrix))
     batch.draw(shader)
@@ -229,7 +227,8 @@ def _draw_selection(region: bpy.types.Region, image: bpy.types.Image) -> None:
         source = _to_region(region, image, rect_quad(session.rect))
         overlay.fill_rects([(source[0][0], source[0][1], source[2][0], source[2][1])], SOURCE_DIM)
         corners = _to_region(region, image, session.preview_quad)
-        _draw_buffer(corners)
+        if session.texture is not None:
+            draw_texture_quad(corners, session.texture)
         _draw_ants(corners)
         return
     rect = session.drag_rect or session.rect
