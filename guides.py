@@ -31,7 +31,7 @@ def _image(context: bpy.types.Context) -> bpy.types.Image | None:
     return cast(bpy.types.SpaceImageEditor, space).image
 
 
-def _find_near(region: bpy.types.Region, image: bpy.types.Image, mx: float, my: float) -> int:
+def find_near(region: bpy.types.Region, image: bpy.types.Image, mx: float, my: float) -> int:
     best = -1
     best_dist = GRAB_RADIUS * overlay.ui_scale()
     for index, guide in enumerate(props.guides(image)):
@@ -148,7 +148,7 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
         rulers = scene is not None and props.show_rulers(scene)
 
         if event.ctrl:
-            index = _find_near(region, image, mx, my)
+            index = find_near(region, image, mx, my)
             if index < 0:
                 return {"PASS_THROUGH"}
             self._index = index

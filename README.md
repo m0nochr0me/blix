@@ -1,7 +1,8 @@
 # Blix
 
-Pixel-art editing tools for the Blender image editor: pixel grid, rulers and guides, marquee
-selection with nearest-neighbor transforms, a layer stack, and ordered Bayer dithering.
+Pixel-art editing tools for the Blender image editor: pixel grid, rulers and guides, box and
+ellipse selection with boolean modes and nearest-neighbor transforms, shape drawing, mirror
+symmetry, a layer stack, and ordered Bayer dithering.
 
 Requires Blender 5.2 LTS or newer.
 
@@ -42,13 +43,17 @@ Add, remove and clear also exist as buttons; the list edits positions numericall
 
 ### Selection & Transform
 
-*Blix Select* tool. Marquee snaps to whole pixels. Moving or transforming lifts the pixels into a
-floating buffer drawn with a nearest-neighbor GPU preview; the commit clears the source rect and
-composites the buffer with straight-alpha over.
+*Blix Select Box* and *Blix Select Ellipse* tools. A selection is a per-pixel mask, so it can be
+any shape. Marquees snap to whole pixels. Moving or transforming lifts the masked pixels into a
+floating buffer drawn with a nearest-neighbor GPU preview; the commit clears the masked source and
+composites the buffer with straight-alpha over. Marching ants trace the mask itself, holes
+included.
 
 | Action | Input |
 | --- | --- |
 | Marquee | LMB drag |
+| Add to selection | Shift+LMB drag |
+| Subtract from selection | Ctrl+LMB drag |
 | Move selection | LMB drag inside it, or `G` |
 | Rotate freely | `R`, Ctrl snaps to 15° |
 | Scale | `S` |
@@ -57,8 +62,30 @@ composites the buffer with straight-alpha over.
 | Cancel | Esc or RMB |
 | Clear selection | Esc |
 
-Quarter turns and flips are panel buttons. With a layer stack present, selection edits target the
-active layer.
+The *Mode* row in the Selection panel sets the default for a plain LMB drag; Shift and Ctrl
+override it for that drag. Ctrl+LMB within 6 px of a guide still grabs the guide instead of
+subtracting. Quarter turns and flips are panel buttons. With a layer stack present, selection edits
+target the active layer.
+
+### Shapes
+
+*Blix Shape* tool. Drag to draw; the GPU preview shows the exact pixels before the commit. Shape
+kind (line, rectangle, ellipse, hexagon), fill and hexagon orientation live in the Shapes panel.
+Outlines are 1 px. An active selection clips the result.
+
+| Action | Input |
+| --- | --- |
+| Draw | LMB drag, corner to corner |
+| Constrain | Shift — square/circle/regular hexagon, 45° for lines |
+| Draw from center | Alt |
+| Secondary color | Ctrl |
+| Cancel | Esc or RMB |
+
+### Mirror
+
+*Mirror H* reflects left to right across the vertical center axis, *Mirror V* top to bottom; both
+on gives four quadrant copies. Enabled axes are drawn over the image. Reflection is exact for odd
+and even canvas sizes — the center row or column maps onto itself.
 
 ### Layers
 
@@ -79,11 +106,15 @@ brush size and density are in the Dither panel.
 
 ## Preferences
 
-Edit > Preferences > Add-ons > Blix: guide, grid, ruler background and ruler text colors, ruler
-band width, and every Blix key binding (guide drag plus the tool keymaps) for rebinding.
+Edit > Preferences > Add-ons > Blix: guide, grid, ruler background, ruler text and mirror axis
+colors, ruler band width, and every Blix key binding (guide drag plus the tool keymaps) for
+rebinding.
 
 ## Limits
 
+- Mirror applies to Blix tools only — the shape tool and the dither brush. Blender's native paint
+  brush has no stroke hook, so native strokes are not mirrored. The dither gradient is not mirrored
+  either; it already fills its whole target region.
 - Layer images are packed as PNG, so layer storage is 8 bit per channel.
 - Every pixel operation pushes one extra no-op image undo step; that bracket is what makes direct
   pixel writes revertible.

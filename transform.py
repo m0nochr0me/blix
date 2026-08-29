@@ -35,7 +35,7 @@ def rotate_buffer_nn(buffer: np.ndarray, angle: float) -> np.ndarray:
     cos_a, sin_a = math.cos(angle), math.sin(angle)
     new_w = max(1, math.ceil(abs(width * cos_a) + abs(height * sin_a)))
     new_h = max(1, math.ceil(abs(width * sin_a) + abs(height * cos_a)))
-    out = np.zeros((new_h, new_w, 4), dtype=np.float32)
+    out = np.zeros((new_h, new_w, *buffer.shape[2:]), dtype=buffer.dtype)
     yy, xx = np.mgrid[0:new_h, 0:new_w]
     dx = xx + 0.5 - new_w / 2
     dy = yy + 0.5 - new_h / 2
@@ -74,12 +74,14 @@ def _commit_buffer(
     image: bpy.types.Image,
     rect: select.Rect,
     buffer: np.ndarray,
+    float_mask: np.ndarray,
 ) -> None:
-    size = (buffer.shape[1], buffer.shape[0])
-    origin = centered_origin(rect, size)
+    clear_mask = select.session.mask
+    assert clear_mask is not None
+    origin = centered_origin(rect, (buffer.shape[1], buffer.shape[0]))
     undo.record(context, image)
-    select.apply_buffer(image, rect, buffer, origin)
-    select.finish_float(context, image, select.clip_rect(image, origin, size))
+    select.apply_buffer(image, clear_mask, buffer, origin)
+    select.finish_float(context, image, select.place_mask(image, float_mask, origin))
 
 
 class BLIX_OT_select_flip(bpy.types.Operator):
@@ -98,11 +100,15 @@ class BLIX_OT_select_flip(bpy.types.Operator):
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         image = select.edit_image(context)
         rect = select.session.rect
-        assert image is not None and rect is not None
-        flipped = flip_buffer(select.lift(image, rect), self.horizontal)
+        mask = select.session.mask
+        assert image is not None and rect is not None and mask is not None
+        buffer, sub = select.lift(image, mask, rect)
+        flipped = flip_buffer(buffer, self.horizontal)
+        origin = (rect[0], rect[1])
         undo.record(context, image)
-        select.apply_buffer(image, rect, flipped, (rect[0], rect[1]))
-        select.finish_float(context, image, rect)
+        select.apply_buffer(image, mask, flipped, origin)
+        placed = select.place_mask(image, flip_buffer(sub, self.horizontal), origin)
+        select.finish_float(context, image, placed)
         return {"FINISHED"}
 
 
@@ -122,9 +128,11 @@ class BLIX_OT_select_rotate90(bpy.types.Operator):
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         image = select.edit_image(context)
         rect = select.session.rect
-        assert image is not None and rect is not None
-        rotated = rotate90_buffer(select.lift(image, rect), self.turns)
-        _commit_buffer(context, image, rect, rotated)
+        mask = select.session.mask
+        assert image is not None and rect is not None and mask is not None
+        buffer, sub = select.lift(image, mask, rect)
+        rotated = rotate90_buffer(buffer, self.turns)
+        _commit_buffer(context, image, rect, rotated, rotate90_buffer(sub, self.turns))
         return {"FINISHED"}
 
 
@@ -147,9 +155,10 @@ class BLIX_OT_select_scale(bpy.types.Operator):
     ) -> set[OperatorReturnItems]:
         image = select.edit_image(context)
         rect = select.session.rect
+        mask = select.session.mask
         region = context.region
-        assert image is not None and rect is not None and region is not None
-        select.start_float(image, rect)
+        assert image is not None and rect is not None and mask is not None and region is not None
+        select.start_float(image, mask, rect)
         cx, cy = _rect_center(rect)
         mx, my = select.mouse_pixel(region, image, event)
         self._start_dist = max(math.hypot(mx - cx, my - cy), 1e-3)
@@ -186,11 +195,14 @@ class BLIX_OT_select_scale(bpy.types.Operator):
         if (event.type == "LEFTMOUSE" and event.value == "PRESS") or (
             event.type in {"RET", "NUMPAD_ENTER"} and event.value == "PRESS"
         ):
-            buffer = select.session.buffer
+            float_mask = select.session.float_mask
+            assert float_mask is not None
             new_w = max(1, int(math.floor((rect[2] - rect[0]) * self._factor + 0.5)))
             new_h = max(1, int(math.floor((rect[3] - rect[1]) * self._factor + 0.5)))
-            scaled = scale_buffer_nn(buffer, (new_w, new_h))
-            _commit_buffer(context, image, rect, scaled)
+            scaled = scale_buffer_nn(select.session.buffer, (new_w, new_h))
+            _commit_buffer(
+                context, image, rect, scaled, scale_buffer_nn(float_mask, (new_w, new_h))
+            )
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:
@@ -220,9 +232,10 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
     ) -> set[OperatorReturnItems]:
         image = select.edit_image(context)
         rect = select.session.rect
+        mask = select.session.mask
         region = context.region
-        assert image is not None and rect is not None and region is not None
-        select.start_float(image, rect)
+        assert image is not None and rect is not None and mask is not None and region is not None
+        select.start_float(image, mask, rect)
         cx, cy = _rect_center(rect)
         mx, my = select.mouse_pixel(region, image, event)
         self._start_angle = math.atan2(my - cy, mx - cx)
@@ -255,8 +268,10 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
         if (event.type == "LEFTMOUSE" and event.value == "PRESS") or (
             event.type in {"RET", "NUMPAD_ENTER"} and event.value == "PRESS"
         ):
+            float_mask = select.session.float_mask
+            assert float_mask is not None
             rotated = rotate_buffer_nn(select.session.buffer, self._angle)
-            _commit_buffer(context, image, rect, rotated)
+            _commit_buffer(context, image, rect, rotated, rotate_buffer_nn(float_mask, self._angle))
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:

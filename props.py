@@ -53,6 +53,30 @@ def grid_divisions(scene: bpy.types.Scene) -> int:
     return int(cast(Any, scene).blix_grid_divisions)
 
 
+def select_mode(scene: bpy.types.Scene) -> str:
+    return cast(Any, scene).blix_select_mode
+
+
+def mirror_h(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_mirror_h
+
+
+def mirror_v(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_mirror_v
+
+
+def shape_kind(scene: bpy.types.Scene) -> str:
+    return cast(Any, scene).blix_shape_kind
+
+
+def shape_filled(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_shape_filled
+
+
+def shape_hex_pointy(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_shape_hex_pointy
+
+
 def dither_size(scene: bpy.types.Scene) -> int:
     return int(cast(Any, scene).blix_dither_size)
 

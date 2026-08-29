@@ -18,24 +18,40 @@ ANTS_LIGHT = (1.0, 1.0, 1.0, 0.9)
 SOURCE_DIM = (0.0, 0.0, 0.0, 0.45)
 
 Rect = tuple[int, int, int, int]
+Size = tuple[int, int]
 Quad = list[tuple[float, float]]
+Affine = tuple[float, float, float, float]
 
 
 class _Session:
     def __init__(self) -> None:
         self.image_name = ""
+        self.mask: np.ndarray | None = None
         self.rect: Rect | None = None
-        self.drag_rect: Rect | None = None
+        self.outline: np.ndarray | None = None
+        self.drag_outline: np.ndarray | None = None
         self.buffer: np.ndarray | None = None
+        self.float_mask: np.ndarray | None = None
+        self.float_outline: np.ndarray | None = None
         self.offset = (0, 0)
+        self.preview_offset: tuple[int, int] | None = None
         self.preview_quad: Quad | None = None
         self.texture: gpu.types.GPUTexture | None = None
 
     def reset(self) -> None:
         self.__init__()
 
+    def set_mask(self, mask: np.ndarray | None) -> None:
+        rect = mask_bbox(mask) if mask is not None else None
+        self.mask = mask if rect is not None else None
+        self.rect = rect
+        self.outline = mask_outline(mask) if rect is not None and mask is not None else None
+
     def drop_float(self) -> None:
         self.buffer = None
+        self.float_mask = None
+        self.float_outline = None
+        self.preview_offset = None
         self.texture = None
         self.preview_quad = None
 
@@ -95,18 +111,100 @@ def write_pixels(image: bpy.types.Image, pixels: np.ndarray) -> None:
     image.update()
 
 
-def lift(image: bpy.types.Image, rect: Rect) -> np.ndarray:
+def mask_bbox(mask: np.ndarray) -> Rect | None:
+    rows = np.flatnonzero(np.any(mask, axis=1))
+    if rows.size == 0:
+        return None
+    cols = np.flatnonzero(np.any(mask, axis=0))
+    return (int(cols[0]), int(rows[0]), int(cols[-1]) + 1, int(rows[-1]) + 1)
+
+
+def mask_outline(mask: np.ndarray) -> np.ndarray:
+    """Boundary unit segments in image space, shape (N, 2, 2)."""
+    height, width = mask.shape
+    columns = np.zeros((height, width + 2), dtype=bool)
+    columns[:, 1:-1] = mask
+    vy, vx = np.nonzero(columns[:, 1:] != columns[:, :-1])
+    rows = np.zeros((height + 2, width), dtype=bool)
+    rows[1:-1] = mask
+    hy, hx = np.nonzero(rows[1:] != rows[:-1])
+    starts = np.concatenate([np.stack([vx, vy], axis=1), np.stack([hx, hy], axis=1)]).astype(
+        np.float32
+    )
+    ends = starts.copy()
+    ends[: vx.size, 1] += 1.0
+    ends[vx.size :, 0] += 1.0
+    return np.stack([starts, ends], axis=1)
+
+
+def mask_row_rects(mask: np.ndarray) -> list[tuple[float, float, float, float]]:
+    """Contiguous per-row runs of a mask as image-space rectangles."""
+    height, width = mask.shape
+    padded = np.zeros((height, width + 2), dtype=bool)
+    padded[:, 1:-1] = mask
+    ys, xs = np.nonzero(padded[:, 1:] != padded[:, :-1])
+    rows = ys[0::2].tolist()
+    starts = xs[0::2].tolist()
+    ends = xs[1::2].tolist()
+    return [(x0, y, x1, y + 1) for y, x0, x1 in zip(rows, starts, ends, strict=True)]
+
+
+def rect_mask(size: Size, rect: Rect) -> np.ndarray:
+    width, height = size
+    mask = np.zeros((height, width), dtype=bool)
+    mask[rect[1] : rect[3], rect[0] : rect[2]] = True
+    return mask
+
+
+def ellipse_mask(size: Size, rect: Rect) -> np.ndarray:
+    width, height = size
     x0, y0, x1, y1 = rect
-    return read_pixels(pixel_target(image))[y0:y1, x0:x1].copy()
+    mask = np.zeros((height, width), dtype=bool)
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    rx, ry = max((x1 - x0) / 2, 0.5), max((y1 - y0) / 2, 0.5)
+    yy, xx = np.mgrid[y0:y1, x0:x1]
+    mask[y0:y1, x0:x1] = ((xx + 0.5 - cx) / rx) ** 2 + ((yy + 0.5 - cy) / ry) ** 2 <= 1.0
+    return mask
+
+
+def shape_mask(size: Size, rect: Rect, shape: str) -> np.ndarray:
+    return ellipse_mask(size, rect) if shape == "ELLIPSE" else rect_mask(size, rect)
+
+
+def combine_mask(base: np.ndarray | None, shape: np.ndarray, mode: str) -> np.ndarray:
+    if base is None or mode == "SET":
+        return shape
+    if mode == "ADD":
+        return base | shape
+    return base & ~shape
+
+
+def place_mask(image: bpy.types.Image, sub: np.ndarray, origin: tuple[int, int]) -> np.ndarray:
+    width, height = image.size
+    mask = np.zeros((height, width), dtype=bool)
+    box = clip_rect(image, origin, (sub.shape[1], sub.shape[0]))
+    if box is None:
+        return mask
+    x0, y0, x1, y1 = box
+    ox, oy = origin
+    mask[y0:y1, x0:x1] = sub[y0 - oy : y1 - oy, x0 - ox : x1 - ox]
+    return mask
+
+
+def lift(image: bpy.types.Image, mask: np.ndarray, rect: Rect) -> tuple[np.ndarray, np.ndarray]:
+    x0, y0, x1, y1 = rect
+    buffer = read_pixels(pixel_target(image))[y0:y1, x0:x1].copy()
+    sub = mask[y0:y1, x0:x1].copy()
+    buffer[~sub] = 0.0
+    return buffer, sub
 
 
 def apply_buffer(
-    image: bpy.types.Image, clear_rect: Rect, buffer: np.ndarray, origin: tuple[int, int]
+    image: bpy.types.Image, clear_mask: np.ndarray, buffer: np.ndarray, origin: tuple[int, int]
 ) -> None:
     target = pixel_target(image)
     pixels = read_pixels(target)
-    x0, y0, x1, y1 = clear_rect
-    pixels[y0:y1, x0:x1] = 0.0
+    pixels[clear_mask] = 0.0
     buf_h, buf_w = buffer.shape[:2]
     ox, oy = origin
     width, height = target.size
@@ -139,20 +237,24 @@ def clip_rect(
     return (x0, y0, x1, y1)
 
 
-def finish_float(context: bpy.types.Context, image: bpy.types.Image, new_rect: Rect | None) -> None:
+def finish_float(
+    context: bpy.types.Context, image: bpy.types.Image, new_mask: np.ndarray | None
+) -> None:
     from . import layers
 
-    session.rect = new_rect
     session.drop_float()
+    session.set_mask(new_mask)
     if len(props.layers(image)):
         layers.composite(image)
     undo.record(context, image)
     overlay.tag_redraw(context)
 
 
-def start_float(image: bpy.types.Image, rect: Rect) -> None:
-    session.buffer = lift(image, rect)
+def start_float(image: bpy.types.Image, mask: np.ndarray, rect: Rect) -> None:
+    session.buffer, session.float_mask = lift(image, mask, rect)
+    session.float_outline = mask_outline(session.float_mask)
     session.texture = make_texture(session.buffer)
+    session.preview_offset = None
     session.preview_quad = rect_quad(rect)
 
 
@@ -201,8 +303,60 @@ def make_texture(buffer: np.ndarray) -> gpu.types.GPUTexture:
     return gpu.types.GPUTexture((width, height), format="RGBA32F", data=data)
 
 
+class Preview:
+    """Textured overlay of a pending pixel edit, drawn over the image."""
+
+    def __init__(self) -> None:
+        self.texture: gpu.types.GPUTexture | None = None
+        self.rect: Rect | None = None
+        self.image_name = ""
+
+    def set(self, image: bpy.types.Image, rect: Rect, buffer: np.ndarray) -> None:
+        self.texture = make_texture(buffer)
+        self.rect = rect
+        self.image_name = image.name
+
+    def clear(self) -> None:
+        self.texture = None
+        self.rect = None
+        self.image_name = ""
+
+    def draw(self, region: bpy.types.Region, image: bpy.types.Image) -> None:
+        if self.texture is None or self.rect is None or self.image_name != image.name:
+            return
+        corners = [overlay.image_to_region(region, image, x, y) for x, y in rect_quad(self.rect)]
+        draw_texture_quad(corners, self.texture)
+
+
 def _to_region(region: bpy.types.Region, image: bpy.types.Image, quad: Quad) -> Quad:
     return [overlay.image_to_region(region, image, x, y) for x, y in quad]
+
+
+def _image_affine(region: bpy.types.Region, image: bpy.types.Image) -> Affine | None:
+    """Image pixel to region pixel as (scale x, offset x, scale y, offset y)."""
+    u0, v0 = region.view2d.region_to_view(0.0, 0.0)
+    u1, v1 = region.view2d.region_to_view(region.width, region.height)
+    width, height = image.size
+    if u1 == u0 or v1 == v0:
+        return None
+    sx = region.width / ((u1 - u0) * width)
+    sy = region.height / ((v1 - v0) * height)
+    return (sx, -u0 * width * sx, sy, -v0 * height * sy)
+
+
+def _segment_points(affine: Affine, segments: np.ndarray) -> Quad:
+    sx, tx, sy, ty = affine
+    points = segments.reshape(-1, 2)
+    xs = points[:, 0] * sx + tx
+    ys = points[:, 1] * sy + ty
+    return list(zip(xs.tolist(), ys.tolist(), strict=True))
+
+
+def _region_rects(
+    affine: Affine, rects: list[tuple[float, float, float, float]]
+) -> list[tuple[float, float, float, float]]:
+    sx, tx, sy, ty = affine
+    return [(x0 * sx + tx, y0 * sy + ty, x1 * sx + tx, y1 * sy + ty) for x0, y0, x1, y1 in rects]
 
 
 def _loop_points(corners: Quad) -> Quad:
@@ -212,11 +366,11 @@ def _loop_points(corners: Quad) -> Quad:
     return points
 
 
-def _dash_points(corners: Quad, dash: float = 5.0) -> Quad:
+def _dash_points(segments: Quad, dash: float = 5.0) -> Quad:
     points: Quad = []
-    for index in range(4):
-        sx, sy = corners[index]
-        ex, ey = corners[(index + 1) % 4]
+    for index in range(0, len(segments) - 1, 2):
+        sx, sy = segments[index]
+        ex, ey = segments[index + 1]
         length = math.hypot(ex - sx, ey - sy)
         if length < 1e-3:
             continue
@@ -229,9 +383,9 @@ def _dash_points(corners: Quad, dash: float = 5.0) -> Quad:
     return points
 
 
-def _draw_ants(corners: Quad) -> None:
-    overlay.draw_lines(_loop_points(corners), ANTS_DARK)
-    overlay.draw_lines(_dash_points(corners), ANTS_LIGHT)
+def _draw_ants(segments: Quad) -> None:
+    overlay.draw_lines(segments, ANTS_DARK)
+    overlay.draw_lines(_dash_points(segments), ANTS_LIGHT)
 
 
 def draw_texture_quad(corners: Quad, texture: gpu.types.GPUTexture) -> None:
@@ -245,54 +399,102 @@ def draw_texture_quad(corners: Quad, texture: gpu.types.GPUTexture) -> None:
     batch.draw(shader)
 
 
+def _float_ants(affine: Affine, corners: Quad) -> Quad:
+    if session.float_outline is None or session.preview_offset is None or session.rect is None:
+        return _loop_points(corners)
+    offset = np.array(
+        [session.rect[0] + session.preview_offset[0], session.rect[1] + session.preview_offset[1]],
+        dtype=np.float32,
+    )
+    return _segment_points(affine, session.float_outline + offset)
+
+
 def _draw_selection(region: bpy.types.Region, image: bpy.types.Image) -> None:
     if session.image_name != image.name:
         return
-    if session.buffer is not None and session.rect is not None and session.preview_quad is not None:
-        source = _to_region(region, image, rect_quad(session.rect))
-        overlay.fill_rects([(source[0][0], source[0][1], source[2][0], source[2][1])], SOURCE_DIM)
+    affine = _image_affine(region, image)
+    if affine is None:
+        return
+    if session.buffer is not None and session.mask is not None and session.preview_quad is not None:
+        overlay.fill_rects(_region_rects(affine, mask_row_rects(session.mask)), SOURCE_DIM)
         corners = _to_region(region, image, session.preview_quad)
         if session.texture is not None:
             draw_texture_quad(corners, session.texture)
-        _draw_ants(corners)
+        _draw_ants(_float_ants(affine, corners))
         return
-    rect = session.drag_rect or session.rect
-    if rect is not None:
-        _draw_ants(_to_region(region, image, rect_quad(rect)))
+    outline = session.drag_outline if session.drag_outline is not None else session.outline
+    if outline is not None:
+        _draw_ants(_segment_points(affine, outline))
 
 
 class BLIX_OT_select_marquee(bpy.types.Operator):
-    """Drag to select pixels; click inside selection to move it, click outside to clear"""
+    """Drag to select pixels; Shift adds, Ctrl subtracts, click inside selection to move it"""
 
     bl_idname = "blix.select_marquee"
     bl_label = "Select Box"
     bl_options = {"REGISTER", "INTERNAL"}
 
+    shape: bpy.props.EnumProperty(
+        items=(("BOX", "Box", ""), ("ELLIPSE", "Ellipse", "")),
+        default="BOX",
+        options={"SKIP_SAVE", "HIDDEN"},
+    )
+    mode: bpy.props.EnumProperty(
+        items=(
+            ("DEFAULT", "Default", ""),
+            ("SET", "Set", ""),
+            ("ADD", "Add", ""),
+            ("SUB", "Subtract", ""),
+        ),
+        default="DEFAULT",
+        options={"SKIP_SAVE", "HIDDEN"},
+    )
+
     _anchor: tuple[int, int]
+    _base: np.ndarray | None
+    _mode: str
 
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
     ) -> set[OperatorReturnItems]:
+        from . import guides
+
         image = edit_image(context)
         if image is None or image.size[0] == 0 or image.size[1] == 0:
             return {"PASS_THROUGH"}
         region = context.region
         assert region is not None
+        near_guide = guides.find_near(region, image, event.mouse_region_x, event.mouse_region_y)
+        if event.ctrl and near_guide >= 0:
+            return {"PASS_THROUGH"}
         x, y = mouse_pixel(region, image, event)
         px, py = math.floor(x), math.floor(y)
 
-        if session.image_name == image.name and session.rect is not None:
-            x0, y0, x1, y1 = session.rect
-            if x0 <= px < x1 and y0 <= py < y1:
+        scene = context.scene
+        mode = self.mode
+        if mode == "DEFAULT":
+            mode = props.select_mode(scene) if scene is not None else "SET"
+        current = session.mask if session.image_name == image.name else None
+
+        if mode == "SET" and current is not None:
+            height, width = current.shape
+            if 0 <= px < width and 0 <= py < height and current[py, px]:
                 return cast(Any, bpy.ops).blix.select_move("INVOKE_DEFAULT", drag=True)
 
         session.reset()
         session.image_name = image.name
+        self._base = None if mode == "SET" else current
+        self._mode = mode
         self._anchor = (px, py)
         window_manager = context.window_manager
         assert window_manager is not None
         window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
+
+    def _combined(self, image: bpy.types.Image, px: int, py: int) -> np.ndarray:
+        rect = self._normalized(image, px, py)
+        size = (image.size[0], image.size[1])
+        return combine_mask(self._base, shape_mask(size, rect, self.shape), self._mode)
 
     def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
         image = edit_image(context)
@@ -303,21 +505,24 @@ class BLIX_OT_select_marquee(bpy.types.Operator):
 
         if event.type == "MOUSEMOVE":
             x, y = mouse_pixel(region, image, event)
-            session.drag_rect = self._normalized(image, math.floor(x), math.floor(y))
+            session.drag_outline = mask_outline(self._combined(image, math.floor(x), math.floor(y)))
             overlay.tag_redraw(context)
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "RELEASE":
             x, y = mouse_pixel(region, image, event)
             px, py = math.floor(x), math.floor(y)
-            session.rect = None if (px, py) == self._anchor else self._normalized(image, px, py)
-            session.drag_rect = None
+            session.drag_outline = None
+            if (px, py) == self._anchor:
+                session.set_mask(self._base)
+            else:
+                session.set_mask(self._combined(image, px, py))
             overlay.tag_redraw(context)
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:
-            session.drag_rect = None
-            session.rect = None
+            session.drag_outline = None
+            session.set_mask(self._base)
             overlay.tag_redraw(context)
             return {"CANCELLED"}
 
@@ -351,11 +556,12 @@ class BLIX_OT_select_move(bpy.types.Operator):
         self, context: bpy.types.Context, event: bpy.types.Event
     ) -> set[OperatorReturnItems]:
         image = edit_image(context)
-        assert image is not None and session.rect is not None
+        assert image is not None and session.rect is not None and session.mask is not None
         region = context.region
         assert region is not None
-        start_float(image, session.rect)
+        start_float(image, session.mask, session.rect)
         session.offset = (0, 0)
+        session.preview_offset = (0, 0)
         self._start = mouse_pixel(region, image, event)
         self._nudge = [0, 0]
         window_manager = context.window_manager
@@ -368,6 +574,7 @@ class BLIX_OT_select_move(bpy.types.Operator):
         assert session.rect is not None
         x0, y0, x1, y1 = session.rect
         dx, dy = session.offset
+        session.preview_offset = (dx, dy)
         session.preview_quad = rect_quad((x0 + dx, y0 + dy, x1 + dx, y1 + dy))
 
     def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
@@ -420,13 +627,12 @@ class BLIX_OT_select_move(bpy.types.Operator):
 
     def _commit(self, context: bpy.types.Context, image: bpy.types.Image) -> None:
         assert session.rect is not None and session.buffer is not None
-        x0, y0, x1, y1 = session.rect
+        assert session.mask is not None and session.float_mask is not None
         dx, dy = session.offset
-        origin = (x0 + dx, y0 + dy)
+        origin = (session.rect[0] + dx, session.rect[1] + dy)
         undo.record(context, image)
-        apply_buffer(image, session.rect, session.buffer, origin)
-        new_rect = clip_rect(image, origin, (x1 - x0, y1 - y0))
-        finish_float(context, image, new_rect)
+        apply_buffer(image, session.mask, session.buffer, origin)
+        finish_float(context, image, place_mask(image, session.float_mask, origin))
 
 
 class BLIX_OT_select_clear(bpy.types.Operator):
@@ -444,21 +650,47 @@ class BLIX_OT_select_clear(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class BLIX_TOOL_select(bpy.types.WorkSpaceTool):
-    bl_space_type = "IMAGE_EDITOR"
-    bl_context_mode = "PAINT"
-    bl_idname = "blix.select_box"
-    bl_label = "Blix Select"
-    bl_description = "Select, move and transform pixel regions"
-    bl_icon = "ops.generic.select_box"
-    bl_widget = None
-    bl_keymap = (
-        ("blix.select_marquee", {"type": "LEFTMOUSE", "value": "PRESS"}, None),
+def _tool_keymap(shape: str) -> tuple[Any, ...]:
+    marquee = "blix.select_marquee"
+    return (
+        (marquee, {"type": "LEFTMOUSE", "value": "PRESS"}, {"properties": [("shape", shape)]}),
+        (
+            marquee,
+            {"type": "LEFTMOUSE", "value": "PRESS", "shift": True},
+            {"properties": [("shape", shape), ("mode", "ADD")]},
+        ),
+        (
+            marquee,
+            {"type": "LEFTMOUSE", "value": "PRESS", "ctrl": True},
+            {"properties": [("shape", shape), ("mode", "SUB")]},
+        ),
         ("blix.select_move", {"type": "G", "value": "PRESS"}, None),
         ("blix.select_rotate", {"type": "R", "value": "PRESS"}, None),
         ("blix.select_scale", {"type": "S", "value": "PRESS"}, None),
         ("blix.select_clear", {"type": "ESC", "value": "PRESS"}, None),
     )
+
+
+class BLIX_TOOL_select(bpy.types.WorkSpaceTool):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_context_mode = "PAINT"
+    bl_idname = "blix.select_box"
+    bl_label = "Blix Select Box"
+    bl_description = "Select, move and transform rectangular pixel regions"
+    bl_icon = "ops.generic.select_box"
+    bl_widget = None
+    bl_keymap = _tool_keymap("BOX")
+
+
+class BLIX_TOOL_select_ellipse(bpy.types.WorkSpaceTool):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_context_mode = "PAINT"
+    bl_idname = "blix.select_ellipse"
+    bl_label = "Blix Select Ellipse"
+    bl_description = "Select, move and transform elliptical pixel regions"
+    bl_icon = "ops.generic.select_circle"
+    bl_widget = None
+    bl_keymap = _tool_keymap("ELLIPSE")
 
 
 _classes = (BLIX_OT_select_marquee, BLIX_OT_select_move, BLIX_OT_select_clear)
@@ -467,13 +699,27 @@ _classes = (BLIX_OT_select_marquee, BLIX_OT_select_move, BLIX_OT_select_clear)
 def register() -> None:
     for cls in _classes:
         bpy.utils.register_class(cls)
+    scene_cls = cast(Any, bpy.types.Scene)
+    scene_cls.blix_select_mode = bpy.props.EnumProperty(
+        name="Mode",
+        description="How a new marquee combines with the current selection",
+        items=(
+            ("SET", "Set", "Replace the selection", "SELECT_SET", 0),
+            ("ADD", "Add", "Add to the selection", "SELECT_EXTEND", 1),
+            ("SUB", "Subtract", "Subtract from the selection", "SELECT_SUBTRACT", 2),
+        ),
+        default="SET",
+    )
     bpy.utils.register_tool(BLIX_TOOL_select, separator=True)
+    bpy.utils.register_tool(BLIX_TOOL_select_ellipse, after="blix.select_box")
     overlay.extra_draws.append(_draw_selection)
 
 
 def unregister() -> None:
     overlay.extra_draws.remove(_draw_selection)
+    bpy.utils.unregister_tool(BLIX_TOOL_select_ellipse)
     bpy.utils.unregister_tool(BLIX_TOOL_select)
+    del cast(Any, bpy.types.Scene).blix_select_mode
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)
     session.reset()

@@ -5,19 +5,16 @@ from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
 import bpy
-import gpu
 import numpy as np
 
-from . import overlay, props, select, undo
+from . import mirror, overlay, paint, props, select, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
 
 SNAP_ANGLE = math.pi / 4
 
-_preview_texture: gpu.types.GPUTexture | None = None
-_preview_rect: select.Rect | None = None
-_preview_image = ""
+preview = select.Preview()
 
 
 @cache
@@ -71,6 +68,7 @@ def dither_stamp(
     density: float,
     n: int,
     clip: select.Rect,
+    clip_mask: np.ndarray | None = None,
 ) -> None:
     cx, cy = center
     x0 = max(int(math.floor(cx - radius)), clip[0])
@@ -82,66 +80,17 @@ def dither_stamp(
     yy, xx = np.mgrid[y0:y1, x0:x1]
     inside = (xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 <= radius * radius
     mask = inside & (_tiled_thresholds((x0, y0, x1, y1), n) < density)
+    if clip_mask is not None:
+        mask &= clip_mask[y0:y1, x0:x1]
     region = pixels[y0:y1, x0:x1]
     region[mask] = color
     pixels[y0:y1, x0:x1] = region
 
 
-def _srgb_encode(color: np.ndarray) -> np.ndarray:
-    return np.where(
-        color <= 0.0031308, color * 12.92, 1.055 * np.power(color, 1.0 / 2.4) - 0.055
-    ).astype(np.float32)
-
-
-def _brush_colors(context: bpy.types.Context) -> tuple[np.ndarray, np.ndarray]:
-    primary = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-    secondary = np.array([1.0, 1.0, 1.0], dtype=np.float32)
-    tool_settings = context.tool_settings
-    paint = tool_settings.image_paint if tool_settings is not None else None
-    if paint is not None:
-        brush = paint.brush
-        unified = cast(Any, paint).unified_paint_settings
-        if unified is not None and unified.use_unified_color:
-            primary = np.array(unified.color, dtype=np.float32)
-            secondary = np.array(unified.secondary_color, dtype=np.float32)
-        elif brush is not None:
-            primary = np.array(brush.color, dtype=np.float32)
-            secondary = np.array(brush.secondary_color, dtype=np.float32)
-    opaque = np.ones(4, dtype=np.float32)
-    opaque_a = opaque.copy()
-    opaque_a[:3] = _srgb_encode(primary)
-    opaque_b = opaque.copy()
-    opaque_b[:3] = _srgb_encode(secondary)
-    return opaque_a, opaque_b
-
-
-def _target_rect(image: bpy.types.Image) -> select.Rect:
+def _target_clip(image: bpy.types.Image) -> tuple[select.Rect, np.ndarray | None]:
     if select.session.image_name == image.name and select.session.rect is not None:
-        return select.session.rect
-    return (0, 0, image.size[0], image.size[1])
-
-
-def _set_preview(image: bpy.types.Image, rect: select.Rect, buffer: np.ndarray) -> None:
-    global _preview_texture, _preview_rect, _preview_image
-    _preview_texture = select.make_texture(buffer)
-    _preview_rect = rect
-    _preview_image = image.name
-
-
-def _clear_preview() -> None:
-    global _preview_texture, _preview_rect, _preview_image
-    _preview_texture = None
-    _preview_rect = None
-    _preview_image = ""
-
-
-def _draw_preview(region: bpy.types.Region, image: bpy.types.Image) -> None:
-    if _preview_texture is None or _preview_rect is None or _preview_image != image.name:
-        return
-    corners: select.Quad = [
-        overlay.image_to_region(region, image, x, y) for x, y in select.rect_quad(_preview_rect)
-    ]
-    select.draw_texture_quad(corners, _preview_texture)
+        return select.session.rect, select.session.mask
+    return (0, 0, image.size[0], image.size[1]), None
 
 
 class BLIX_OT_dither_gradient(bpy.types.Operator):
@@ -173,18 +122,20 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
     def _update_preview(self, context: bpy.types.Context, image: bpy.types.Image) -> None:
         scene = context.scene
         assert scene is not None
-        rect = _target_rect(image)
-        color_a, color_b = _brush_colors(context)
+        rect, clip_mask = _target_clip(image)
+        color_a, color_b = paint.brush_colors(context)
         buffer = dither_region(
             rect, self._start, self._end, color_a, color_b, props.dither_size(scene)
         )
-        _set_preview(image, rect, buffer)
+        if clip_mask is not None:
+            buffer[~clip_mask[rect[1] : rect[3], rect[0] : rect[2]]] = 0.0
+        preview.set(image, rect, buffer)
         overlay.tag_redraw(context)
 
     def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
         image = select.edit_image(context)
         if image is None:
-            _clear_preview()
+            preview.clear()
             return {"CANCELLED"}
         region = context.region
         assert region is not None
@@ -208,7 +159,7 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:
-            _clear_preview()
+            preview.clear()
             overlay.tag_redraw(context)
             return {"CANCELLED"}
 
@@ -217,15 +168,21 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
     def _commit(self, context: bpy.types.Context, image: bpy.types.Image) -> None:
         scene = context.scene
         assert scene is not None
-        color_a, color_b = _brush_colors(context)
-        rect = _target_rect(image)
+        color_a, color_b = paint.brush_colors(context)
+        rect, clip_mask = _target_clip(image)
         pixels = select.read_pixels(image)
-        pixels[rect[1] : rect[3], rect[0] : rect[2]] = dither_region(
+        buffer = dither_region(
             rect, self._start, self._end, color_a, color_b, props.dither_size(scene)
         )
+        region = pixels[rect[1] : rect[3], rect[0] : rect[2]]
+        if clip_mask is None:
+            region[:] = buffer
+        else:
+            sub = clip_mask[rect[1] : rect[3], rect[0] : rect[2]]
+            region[sub] = buffer[sub]
         undo.record(context, image)
         select.write_pixels(image, pixels)
-        _clear_preview()
+        preview.clear()
         undo.record(context, image)
         overlay.tag_redraw(context)
 
@@ -250,7 +207,7 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
         region = context.region
         assert region is not None
         self._snapshot = select.read_pixels(image).copy()
-        primary, secondary = _brush_colors(context)
+        primary, secondary = paint.brush_colors(context)
         self._color = secondary if event.ctrl else primary
         self._last = select.mouse_pixel(region, image, event)
         undo.record(context, image)
@@ -268,7 +225,9 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
         radius = props.dither_brush_size(scene) / 2
         density = props.dither_density(scene)
         n = props.dither_size(scene)
-        clip = _target_rect(image)
+        clip, clip_mask = _target_clip(image)
+        size = (image.size[0], image.size[1])
+        axes = mirror.enabled(scene)
         pixels = select.read_pixels(image)
         distance = math.hypot(point[0] - self._last[0], point[1] - self._last[1])
         steps = max(int(distance / max(radius / 2, 0.5)), 1)
@@ -278,7 +237,8 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
                 self._last[0] + (point[0] - self._last[0]) * factor,
                 self._last[1] + (point[1] - self._last[1]) * factor,
             )
-            dither_stamp(pixels, center, radius, self._color, density, n, clip)
+            for stamp in mirror.centers(center, size, *axes):
+                dither_stamp(pixels, stamp, radius, self._color, density, n, clip, clip_mask)
         select.write_pixels(image, pixels)
         self._last = point
         overlay.tag_redraw(context)
@@ -349,13 +309,13 @@ def register() -> None:
     scene_cls.blix_dither_brush_size = bpy.props.IntProperty(
         name="Brush Size", default=8, min=1, max=256
     )
-    bpy.utils.register_tool(BLIX_TOOL_dither_gradient, after="blix.select_box")
+    bpy.utils.register_tool(BLIX_TOOL_dither_gradient, after="blix.select_ellipse")
     bpy.utils.register_tool(BLIX_TOOL_dither_brush, after="blix.dither_gradient_tool")
-    overlay.extra_draws.append(_draw_preview)
+    overlay.extra_draws.append(preview.draw)
 
 
 def unregister() -> None:
-    overlay.extra_draws.remove(_draw_preview)
+    overlay.extra_draws.remove(preview.draw)
     bpy.utils.unregister_tool(BLIX_TOOL_dither_brush)
     bpy.utils.unregister_tool(BLIX_TOOL_dither_gradient)
     scene_cls = cast(Any, bpy.types.Scene)
@@ -364,4 +324,4 @@ def unregister() -> None:
     del scene_cls.blix_dither_size
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)
-    _clear_preview()
+    preview.clear()

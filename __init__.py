@@ -1,8 +1,8 @@
 """Blix: pixel-art editing tools for the Blender image editor."""
 
-from . import dither, guides, layers, overlay, prefs, select, transform, ui, undo
+from . import dither, guides, layers, mirror, overlay, prefs, select, shapes, transform, ui, undo
 
-_modules = (prefs, undo, overlay, guides, select, transform, layers, dither, ui)
+_modules = (prefs, undo, overlay, mirror, guides, select, transform, layers, shapes, dither, ui)
 
 
 def register() -> None:
