@@ -9,15 +9,9 @@ import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
 
-from . import props
+from . import prefs, props
 
-RULER_PX = 20
 FONT_ID = 0
-RULER_BG = (0.10, 0.10, 0.10, 0.92)
-TICK_COLOR = (0.65, 0.65, 0.65, 1.0)
-LABEL_COLOR = (0.75, 0.75, 0.75, 1.0)
-GUIDE_COLOR = (0.15, 0.55, 1.0, 0.85)
-GRID_COLOR = (0.15, 0.15, 0.15, 0.55)
 PIXEL_GRID_ALPHA = 0.25
 _STEPS = (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
 
@@ -34,7 +28,7 @@ def ui_scale() -> float:
 
 
 def ruler_px() -> int:
-    return round(RULER_PX * ui_scale())
+    return round(prefs.ruler_size() * ui_scale())
 
 
 def ruler_offsets(area: bpy.types.Area | None, region: bpy.types.Region) -> tuple[int, int]:
@@ -145,14 +139,15 @@ def _draw_grid(region: bpy.types.Region, image: bpy.types.Image, scene: bpy.type
     corner = image_to_region(region, image, image.size[0], image.size[1])
     ppp = (corner[0] - origin[0]) / image.size[0]
     scale = ui_scale()
+    grid_color = prefs.color("grid_color")
     if props.show_pixel_grid(scene):
         fade = min((ppp - 4.0 * scale) / (4.0 * scale), 1.0)
         if fade > 0.0:
-            color = (*GRID_COLOR[:3], PIXEL_GRID_ALPHA * fade)
+            color = (*grid_color[:3], PIXEL_GRID_ALPHA * fade)
             draw_lines(_grid_points(region, image, 1), color)
     divisions = props.grid_divisions(scene)
     if divisions > 0 and divisions * ppp >= 8.0 * scale:
-        draw_lines(_grid_points(region, image, divisions), GRID_COLOR)
+        draw_lines(_grid_points(region, image, divisions), grid_color)
 
 
 def _draw_guides(region: bpy.types.Region, image: bpy.types.Image) -> None:
@@ -164,7 +159,7 @@ def _draw_guides(region: bpy.types.Region, image: bpy.types.Image) -> None:
         else:
             _, ry = image_to_region(region, image, 0.0, image.size[1] - guide.position)
             points += [(0.0, ry), (region.width, ry)]
-    draw_lines(points, GUIDE_COLOR)
+    draw_lines(points, prefs.color("guide_color"))
 
 
 def _draw_rulers(
@@ -177,7 +172,8 @@ def _draw_rulers(
     band_base = band_top - band
     band_right = left_off + band
     fill_rects(
-        [(left_off, band_base, rw, band_top), (left_off, 0, band_right, band_base)], RULER_BG
+        [(left_off, band_base, rw, band_top), (left_off, 0, band_right, band_base)],
+        prefs.color("ruler_background"),
     )
 
     origin = image_to_region(region, image, 0.0, 0.0)
@@ -189,8 +185,9 @@ def _draw_rulers(
     height = image.size[1]
 
     scale = ui_scale()
+    text_color = prefs.color("ruler_text")
     blf.size(FONT_ID, round(9 * scale))
-    blf.color(FONT_ID, *LABEL_COLOR)
+    blf.color(FONT_ID, *text_color)
     ticks: list[tuple[float, float]] = []
 
     step = _step_for(ppp_x)
@@ -221,7 +218,7 @@ def _draw_rulers(
             blf.draw(FONT_ID, str(value))
     blf.disable(FONT_ID, blf.ROTATION)
 
-    draw_lines(ticks, TICK_COLOR)
+    draw_lines(ticks, text_color)
 
 
 def _draw() -> None:

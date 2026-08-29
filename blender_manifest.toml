@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "blix"
-version = "0.6.0"
+version = "0.7.0"
 name = "Blix"
 tagline = "Pixel-art editing tools for the image editor"
 maintainer = "m0nochr0me <m0nochr0mex@gmail.com>"
@@ -21,7 +21,6 @@ paths_exclude_pattern = [
   "/.git/",
   "/*.zip",
   "/.gitignore",
-  "/README.md",
   "/DESIGN.md",
   "/CLAUDE.md",
   "/.claude/",

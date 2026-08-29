@@ -323,7 +323,7 @@ class BLIX_TOOL_dither_brush(bpy.types.WorkSpaceTool):
     bl_idname = "blix.dither_brush_tool"
     bl_label = "Blix Dither Brush"
     bl_description = "Paint with a Bayer-masked brush"
-    bl_icon = "ops.gpencil.draw"
+    bl_icon = "brush.draw"
     bl_widget = None
     bl_keymap = (
         ("blix.dither_stroke", {"type": "LEFTMOUSE", "value": "PRESS"}, None),
