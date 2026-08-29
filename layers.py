@@ -106,9 +106,8 @@ def sync_canvas(canvas: bpy.types.Image) -> None:
 
 
 def composite(canvas: bpy.types.Image) -> None:
-    pixels = composite_pixels(canvas)
-    select.write_pixels(canvas, pixels)
-    _composite_cache[canvas.name] = pixels
+    select.write_pixels(canvas, composite_pixels(canvas))
+    _composite_cache[canvas.name] = select.read_pixels(canvas)
 
 
 def _layer_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
@@ -241,7 +240,7 @@ def flatten(canvas: bpy.types.Image) -> None:
     sync_canvas(canvas)
     pixels = composite_pixels(canvas)
     select.write_pixels(canvas, pixels)
-    _composite_cache[canvas.name] = pixels
+    _composite_cache[canvas.name] = select.read_pixels(canvas)
     stack = props.layers(canvas)
     for layer in stack:
         if layer.image is not None:
