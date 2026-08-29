@@ -4,6 +4,8 @@ from typing import Any, cast
 
 import bpy
 
+from . import layers, props
+
 
 def _space(context: bpy.types.Context) -> bpy.types.SpaceImageEditor:
     return cast(bpy.types.SpaceImageEditor, context.space_data)
@@ -93,7 +95,80 @@ class BLIX_PT_select(bpy.types.Panel):
         cast(Any, row.operator("blix.select_flip", text="Flip V")).horizontal = False
 
 
-_classes = (BLIX_PT_grid, BLIX_UL_guides, BLIX_PT_guides, BLIX_PT_select)
+class BLIX_UL_layers(bpy.types.UIList):
+    def draw_item(
+        self,
+        context: bpy.types.Context | None,
+        layout: bpy.types.UILayout,
+        data: Any | None,
+        item: Any | None,
+        icon: int | None,
+        active_data: Any,
+        active_property: str | None,
+        index: int | None = 0,
+        flt_flag: int | None = 0,
+    ) -> None:
+        assert item is not None
+        row = layout.row(align=True)
+        row.prop(item, "name", text="", emboss=False)
+        row.prop(
+            item, "visible", text="", icon="HIDE_OFF" if item.visible else "HIDE_ON", emboss=False
+        )
+        row.prop(item, "lock", text="", icon="LOCKED" if item.lock else "UNLOCKED", emboss=False)
+
+
+class BLIX_PT_layers(bpy.types.Panel):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Blix"
+    bl_label = "Layers"
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        assert layout is not None
+        image = _space(context).image
+        if image is None:
+            return
+        canvas = image if len(props.layers(image)) else props.canvas_of(image)
+        if canvas is None:
+            layout.operator("blix.layers_init")
+            return
+
+        editing = image != canvas
+        layout.operator(
+            "blix.layer_view_toggle",
+            text="Show Composite" if editing else "Edit Active Layer",
+        )
+        row = layout.row()
+        row.template_list(
+            "BLIX_UL_layers", "", canvas, "blix_layers", canvas, "blix_layers_index", rows=4
+        )
+        col = row.column(align=True)
+        col.operator("blix.layer_add", text="", icon="ADD")
+        col.operator("blix.layer_remove", text="", icon="REMOVE")
+        col.operator("blix.layer_duplicate", text="", icon="DUPLICATE")
+        col.separator()
+        cast(Any, col.operator("blix.layer_move", text="", icon="TRIA_UP")).up = True
+        cast(Any, col.operator("blix.layer_move", text="", icon="TRIA_DOWN")).up = False
+
+        layer = layers.active_layer(canvas)
+        if layer is not None:
+            layout.prop(layer, "blend")
+            layout.prop(layer, "opacity")
+        row = layout.row(align=True)
+        row.operator("blix.layer_merge_down", text="Merge Down")
+        row.operator("blix.layer_flatten", text="Flatten")
+        layout.operator("blix.layers_update")
+
+
+_classes = (
+    BLIX_PT_grid,
+    BLIX_UL_guides,
+    BLIX_PT_guides,
+    BLIX_PT_select,
+    BLIX_UL_layers,
+    BLIX_PT_layers,
+)
 
 
 def register() -> None:

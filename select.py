@@ -270,9 +270,7 @@ class BLIX_OT_select_marquee(bpy.types.Operator):
         window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 
-    def modal(
-        self, context: bpy.types.Context, event: bpy.types.Event
-    ) -> set[OperatorReturnItems]:
+    def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
         image = edit_image(context)
         if image is None:
             return {"CANCELLED"}
@@ -348,9 +346,7 @@ class BLIX_OT_select_move(bpy.types.Operator):
         dx, dy = session.offset
         session.preview_quad = rect_quad((x0 + dx, y0 + dy, x1 + dx, y1 + dy))
 
-    def modal(
-        self, context: bpy.types.Context, event: bpy.types.Event
-    ) -> set[OperatorReturnItems]:
+    def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
         image = edit_image(context)
         if image is None or session.buffer is None:
             return {"CANCELLED"}

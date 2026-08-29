@@ -159,9 +159,7 @@ class BLIX_OT_select_scale(bpy.types.Operator):
         overlay.tag_redraw(context)
         return {"RUNNING_MODAL"}
 
-    def modal(
-        self, context: bpy.types.Context, event: bpy.types.Event
-    ) -> set[OperatorReturnItems]:
+    def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
         image = select.edit_image(context)
         rect = select.session.rect
         if image is None or rect is None or select.session.buffer is None:
@@ -234,9 +232,7 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
         overlay.tag_redraw(context)
         return {"RUNNING_MODAL"}
 
-    def modal(
-        self, context: bpy.types.Context, event: bpy.types.Event
-    ) -> set[OperatorReturnItems]:
+    def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
         image = select.edit_image(context)
         rect = select.session.rect
         if image is None or rect is None or select.session.buffer is None:
