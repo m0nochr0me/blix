@@ -93,15 +93,6 @@ def shape_coverage(
     return solid if filled else border_of(solid)
 
 
-def clamp_rect(size: select.Size, rect: select.Rect) -> select.Rect | None:
-    width, height = size
-    x0, y0 = max(rect[0], 0), max(rect[1], 0)
-    x1, y1 = min(rect[2], width), min(rect[3], height)
-    if x0 >= x1 or y0 >= y1:
-        return None
-    return (x0, y0, x1, y1)
-
-
 class BLIX_OT_draw_shape(bpy.types.Operator):
     """Draw a shape; Shift constrains, Alt draws from center, Ctrl uses the secondary color"""
 
@@ -165,17 +156,10 @@ class BLIX_OT_draw_shape(bpy.types.Operator):
         assert scene is not None
         size = (image.size[0], image.size[1])
         rect, ends = self._geometry(cursor, event)
-        clamped = clamp_rect(size, rect)
-        kind = props.shape_kind(scene)
-        if clamped is None and kind != "LINE":
-            self._coverage = None
-            preview.clear()
-            overlay.tag_redraw(context)
-            return
         coverage = shape_coverage(
             size,
-            kind,
-            clamped or rect,
+            props.shape_kind(scene),
+            rect,
             ends,
             props.shape_filled(scene),
             props.shape_hex_pointy(scene),

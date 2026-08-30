@@ -152,18 +152,26 @@ def mask_row_rects(mask: np.ndarray) -> list[tuple[float, float, float, float]]:
 def rect_mask(size: Size, rect: Rect) -> np.ndarray:
     width, height = size
     mask = np.zeros((height, width), dtype=bool)
-    mask[rect[1] : rect[3], rect[0] : rect[2]] = True
+    box = clip_rect(size, rect)
+    if box is None:
+        return mask
+    mask[box[1] : box[3], box[0] : box[2]] = True
     return mask
 
 
 def ellipse_mask(size: Size, rect: Rect) -> np.ndarray:
+    """Ellipse inscribed in an unbounded rect, rasterized inside the image."""
     width, height = size
     x0, y0, x1, y1 = rect
     mask = np.zeros((height, width), dtype=bool)
+    box = clip_rect(size, rect)
+    if box is None:
+        return mask
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     rx, ry = max((x1 - x0) / 2, 0.5), max((y1 - y0) / 2, 0.5)
-    yy, xx = np.mgrid[y0:y1, x0:x1]
-    mask[y0:y1, x0:x1] = ((xx + 0.5 - cx) / rx) ** 2 + ((yy + 0.5 - cy) / ry) ** 2 <= 1.0
+    bx0, by0, bx1, by1 = box
+    yy, xx = np.mgrid[by0:by1, bx0:bx1]
+    mask[by0:by1, bx0:bx1] = ((xx + 0.5 - cx) / rx) ** 2 + ((yy + 0.5 - cy) / ry) ** 2 <= 1.0
     return mask
 
 
@@ -182,11 +190,11 @@ def combine_mask(base: np.ndarray | None, shape: np.ndarray, mode: str) -> np.nd
 def place_mask(image: bpy.types.Image, sub: np.ndarray, origin: tuple[int, int]) -> np.ndarray:
     width, height = image.size
     mask = np.zeros((height, width), dtype=bool)
-    box = clip_rect(image, origin, (sub.shape[1], sub.shape[0]))
+    ox, oy = origin
+    box = clip_rect((width, height), (ox, oy, ox + sub.shape[1], oy + sub.shape[0]))
     if box is None:
         return mask
     x0, y0, x1, y1 = box
-    ox, oy = origin
     mask[y0:y1, x0:x1] = sub[y0 - oy : y1 - oy, x0 - ox : x1 - ox]
     return mask
 
@@ -226,12 +234,11 @@ def apply_buffer(
     write_pixels(target, pixels)
 
 
-def clip_rect(
-    image: bpy.types.Image, origin: tuple[int, int], size: tuple[int, int]
-) -> Rect | None:
-    width, height = image.size
-    x0, y0 = max(origin[0], 0), max(origin[1], 0)
-    x1, y1 = min(origin[0] + size[0], width), min(origin[1] + size[1], height)
+def clip_rect(size: Size, rect: Rect) -> Rect | None:
+    """Intersection of an unbounded canvas rect with the image, None if outside."""
+    width, height = size
+    x0, y0 = max(rect[0], 0), max(rect[1], 0)
+    x1, y1 = min(rect[2], width), min(rect[3], height)
     if x0 >= x1 or y0 >= y1:
         return None
     return (x0, y0, x1, y1)
@@ -492,7 +499,7 @@ class BLIX_OT_select_marquee(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def _combined(self, image: bpy.types.Image, px: int, py: int) -> np.ndarray:
-        rect = self._normalized(image, px, py)
+        rect = self._normalized(px, py)
         size = (image.size[0], image.size[1])
         return combine_mask(self._base, shape_mask(size, rect, self.shape), self._mode)
 
@@ -528,12 +535,10 @@ class BLIX_OT_select_marquee(bpy.types.Operator):
 
         return {"RUNNING_MODAL"}
 
-    def _normalized(self, image: bpy.types.Image, px: int, py: int) -> Rect:
+    def _normalized(self, px: int, py: int) -> Rect:
+        """Drag rect on an unbounded canvas; clipping happens when rasterizing."""
         ax, ay = self._anchor
-        width, height = image.size
-        x0, x1 = min(ax, px), max(ax, px) + 1
-        y0, y1 = min(ay, py), max(ay, py) + 1
-        return (max(x0, 0), max(y0, 0), min(x1, width), min(y1, height))
+        return (min(ax, px), min(ay, py), max(ax, px) + 1, max(ay, py) + 1)
 
 
 class BLIX_OT_select_move(bpy.types.Operator):
