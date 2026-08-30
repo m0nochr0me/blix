@@ -132,7 +132,7 @@ class BLIX_PT_mirror(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(scene, "blix_mirror_h", toggle=True)
         row.prop(scene, "blix_mirror_v", toggle=True)
-        layout.label(text="Blix tools only", icon="INFO")
+        layout.label(text="Brush, shapes, dither brush", icon="INFO")
 
 
 class BLIX_UL_layers(bpy.types.UIList):

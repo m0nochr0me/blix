@@ -87,6 +87,10 @@ Outlines are 1 px. An active selection clips the result.
 on gives four quadrant copies. Enabled axes are drawn over the image. Reflection is exact for odd
 and even canvas sizes — the center row or column maps onto itself.
 
+Blender's native brush is mirrored too — paint, erase, Ctrl invert, Shift smooth, any brush type.
+Blender exposes no stroke hook, so Blix snapshots the image on mouse press and reflects the pixels
+the stroke writes while it runs, which lands the mirrored half a frame behind the cursor.
+
 ### Layers
 
 *Initialize Layers* turns the current image into a canvas with a Background layer. Layers are
@@ -120,9 +124,11 @@ rebinding.
 
 ## Limits
 
-- Mirror applies to Blix tools only — the shape tool and the dither brush. Blender's native paint
-  brush has no stroke hook, so native strokes are not mirrored. The dither gradient is not mirrored
-  either; it already fills its whole target region.
+- Native brush mirroring reflects pixel values, not brush dabs: overlapping soft or low-strength
+  dabs do not double-blend where the mirrored half meets the painted one, pixels the mirror wrote
+  are not reflected back, and there is no mirrored brush cursor. An active selection does not clip
+  it, since native paint ignores the selection as well. The dither gradient is not mirrored; it
+  already fills its whole target region.
 - Layer images are packed as PNG, so layer storage is 8 bit per channel.
 - Every pixel operation pushes one extra no-op image undo step; that bracket is what makes direct
   pixel writes revertible.
