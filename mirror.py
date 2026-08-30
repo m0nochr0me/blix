@@ -111,8 +111,20 @@ def _tick() -> float | None:
         return POLL
     _watch = None
     if watch.dirty:
-        undo.record(bpy.context, image)
+        _bracket(bpy.context, image, painted, watch)
     return None
+
+
+def _bracket(
+    context: bpy.types.Context, image: bpy.types.Image, final: np.ndarray, watch: _Watch
+) -> None:
+    """Replay mirror writes between undo records so undoing the stroke also clears them."""
+    unmirrored = final.copy()
+    unmirrored[watch.mine] = watch.base[watch.mine]
+    select.write_pixels(image, unmirrored)
+    undo.record(context, image)
+    select.write_pixels(image, final)
+    undo.record(context, image)
 
 
 class BLIX_OT_mirror_paint(bpy.types.Operator):
