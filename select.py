@@ -43,6 +43,7 @@ class _Session:
         self.preview_quad: Quad | None = None
         self.tex_quad: Quad | None = None
         self.texture: gpu.types.GPUTexture | None = None
+        self.keep_source = False
 
     def reset(self) -> None:
         self.__init__()
@@ -61,6 +62,7 @@ class _Session:
         self.texture = None
         self.preview_quad = None
         self.tex_quad = None
+        self.keep_source = False
 
 
 session = _Session()
@@ -486,7 +488,8 @@ def _draw_selection(region: bpy.types.Region, image: bpy.types.Image) -> None:
     if affine is None:
         return
     if session.buffer is not None and session.mask is not None and session.preview_quad is not None:
-        overlay.fill_rects(_region_rects(affine, mask_row_rects(session.mask)), SOURCE_DIM)
+        if not session.keep_source:
+            overlay.fill_rects(_region_rects(affine, mask_row_rects(session.mask)), SOURCE_DIM)
         corners = _to_region(region, image, session.preview_quad)
         if session.texture is not None:
             tex_corners = (
@@ -639,24 +642,31 @@ class BLIX_OT_select_move(bpy.types.Operator):
     bl_options = {"REGISTER", "INTERNAL"}
 
     drag: bpy.props.BoolProperty(default=False, options={"SKIP_SAVE", "HIDDEN"})
+    duplicate: bpy.props.BoolProperty(default=False, options={"SKIP_SAVE", "HIDDEN"})
 
     _start: tuple[float, float]
     _nudge: list[int]
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
-        return can_float(context)
+        if can_float(context):
+            return True
+        image = edit_image(context)
+        return image is not None and session.buffer is not None and session.image_name == image.name
 
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
     ) -> set[OperatorReturnItems]:
         image = edit_image(context)
-        assert image is not None and session.rect is not None and session.mask is not None
+        assert image is not None and session.rect is not None
         region = context.region
         assert region is not None
-        start_float(image, session.mask, session.rect)
-        session.offset = (0, 0)
-        session.preview_offset = (0, 0)
+        if session.buffer is None:
+            assert session.mask is not None
+            start_float(image, session.mask, session.rect)
+            session.offset = (0, 0)
+            session.preview_offset = (0, 0)
+            session.keep_source = self.duplicate
         self._start = mouse_pixel(region, image, event)
         self._nudge = [0, 0]
         window_manager = context.window_manager
@@ -725,8 +735,9 @@ class BLIX_OT_select_move(bpy.types.Operator):
         assert session.mask is not None and session.float_mask is not None
         dx, dy = session.offset
         origin = (session.rect[0] + dx, session.rect[1] + dy)
+        clear = np.zeros_like(session.mask) if session.keep_source else session.mask
         undo.record(context, image)
-        apply_buffer(image, session.mask, session.buffer, origin)
+        apply_buffer(image, clear, session.buffer, origin)
         finish_float(context, image, place_mask(image, session.float_mask, origin))
 
 
@@ -762,6 +773,15 @@ def _tool_keymap(shape: str) -> tuple[Any, ...]:
         ("blix.select_move", {"type": "G", "value": "PRESS"}, None),
         ("blix.select_rotate", {"type": "R", "value": "PRESS"}, None),
         ("blix.select_scale", {"type": "S", "value": "PRESS"}, None),
+        (
+            "blix.select_move",
+            {"type": "D", "value": "PRESS", "shift": True},
+            {"properties": [("duplicate", True)]},
+        ),
+        ("blix.select_copy", {"type": "C", "value": "PRESS", "ctrl": True}, None),
+        ("blix.select_paste", {"type": "V", "value": "PRESS", "ctrl": True}, None),
+        ("blix.select_delete", {"type": "X", "value": "PRESS"}, None),
+        ("blix.select_delete", {"type": "DEL", "value": "PRESS"}, None),
         ("blix.select_clear", {"type": "ESC", "value": "PRESS"}, None),
     )
 

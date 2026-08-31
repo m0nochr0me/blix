@@ -98,6 +98,9 @@ class BLIX_PT_select(bpy.types.Panel):
         row = layout.row(align=True)
         cast(Any, row.operator("blix.select_flip", text="Flip H")).horizontal = True
         cast(Any, row.operator("blix.select_flip", text="Flip V")).horizontal = False
+        row = layout.row(align=True)
+        row.operator("blix.select_copy", text="Copy")
+        row.operator("blix.select_delete", text="Delete")
 
 
 class BLIX_PT_shapes(bpy.types.Panel):

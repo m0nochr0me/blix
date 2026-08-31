@@ -1,6 +1,7 @@
 """Blix: pixel-art editing tools for the Blender image editor."""
 
 from . import (
+    clipboard,
     dither,
     guides,
     layers,
@@ -23,6 +24,7 @@ _modules = (
     guides,
     select,
     transform,
+    clipboard,
     layers,
     shapes,
     dither,
