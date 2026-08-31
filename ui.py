@@ -236,7 +236,7 @@ class BLIX_PT_palette(bpy.types.Panel):
         layout.operator("blix.palette_import", icon="IMPORT")
         layout.template_ID(image_paint, "palette", new="palette.new")
         if image_paint.palette is not None:
-            layout.template_palette(image_paint, "palette", color=True)
+            layout.template_palette(image_paint, "palette")
 
 
 _classes = (

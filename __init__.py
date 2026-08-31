@@ -1,5 +1,8 @@
 """Blix: pixel-art editing tools for the Blender image editor."""
 
+import importlib
+import sys
+
 from . import (
     clipboard,
     dither,
@@ -15,6 +18,10 @@ from . import (
     ui,
     undo,
 )
+
+if "_modules" in locals():
+    for _module in [mod for name, mod in sys.modules.items() if name.startswith(__name__ + ".")]:
+        importlib.reload(_module)
 
 _modules = (
     prefs,
