@@ -6,6 +6,7 @@ import sys
 from . import (
     clipboard,
     dither,
+    erase,
     guides,
     layers,
     mirror,
@@ -33,6 +34,7 @@ _modules = (
     transform,
     clipboard,
     layers,
+    erase,
     shapes,
     dither,
     palette,

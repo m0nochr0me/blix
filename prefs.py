@@ -39,6 +39,11 @@ def ruler_size() -> int:
     return RULER_SIZE if settings is None else int(settings.ruler_size)
 
 
+def ctrl_erase() -> bool:
+    settings = get()
+    return False if settings is None else bool(settings.ctrl_erase)
+
+
 def _color_property(name: str, label: str) -> Any:
     return bpy.props.FloatVectorProperty(
         name=label,
@@ -65,6 +70,11 @@ class BlixPreferences(bpy.types.AddonPreferences):
         min=12,
         max=64,
     )
+    ctrl_erase: bpy.props.BoolProperty(
+        name="Ctrl+LMB Erases",
+        description="Paint with Erase Alpha blend while Ctrl is held, instead of background color",
+        default=False,
+    )
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
@@ -73,6 +83,7 @@ class BlixPreferences(bpy.types.AddonPreferences):
         for name in DEFAULTS:
             column.prop(self, name)
         layout.prop(self, "ruler_size")
+        layout.prop(self, "ctrl_erase")
         _draw_keymap(layout, context)
 
 
