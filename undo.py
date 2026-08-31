@@ -11,7 +11,10 @@ _pending: set[str] = set()
 
 def record(context: bpy.types.Context, image: bpy.types.Image) -> None:
     """Store image pixels as an undo step; bracket every write with a call before and after."""
+    from . import layers
+
     _pending.discard(image.name)
+    layers.push_history(image)
     with context.temp_override(edit_image=image):
         cast(Any, bpy.ops.image).invert()
 

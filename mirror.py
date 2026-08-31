@@ -89,6 +89,11 @@ def _painting() -> bool:
     return False
 
 
+def busy() -> bool:
+    """A native stroke is running or mirror writes are still settling."""
+    return _watch is not None or _painting()
+
+
 def _tick() -> float | None:
     global _watch
     watch = _watch
