@@ -16,6 +16,11 @@ if TYPE_CHECKING:
 ANTS_DARK = (0.0, 0.0, 0.0, 0.8)
 ANTS_LIGHT = (1.0, 1.0, 1.0, 0.9)
 SOURCE_DIM = (0.0, 0.0, 0.0, 0.45)
+HANDLE_FILL = (1.0, 1.0, 1.0, 1.0)
+HANDLE_HALF = 3.0
+HANDLE_HIT = 6.0
+ROTATE_REACH = 18.0
+_SELECT_TOOLS = {"blix.select_box", "blix.select_ellipse"}
 
 Rect = tuple[int, int, int, int]
 Size = tuple[int, int]
@@ -36,6 +41,7 @@ class _Session:
         self.offset = (0, 0)
         self.preview_offset: tuple[int, int] | None = None
         self.preview_quad: Quad | None = None
+        self.tex_quad: Quad | None = None
         self.texture: gpu.types.GPUTexture | None = None
 
     def reset(self) -> None:
@@ -54,6 +60,7 @@ class _Session:
         self.preview_offset = None
         self.texture = None
         self.preview_quad = None
+        self.tex_quad = None
 
 
 session = _Session()
@@ -395,6 +402,62 @@ def _draw_ants(segments: Quad) -> None:
     overlay.draw_lines(_dash_points(segments), ANTS_LIGHT)
 
 
+def rect_handles(rect: Rect) -> list[tuple[int, int, float, float]]:
+    """Handle id (hx, hy in -1..1) and image-space position for 8 bbox handles."""
+    x0, y0, x1, y1 = rect
+    xs = ((-1, float(x0)), (0, (x0 + x1) / 2), (1, float(x1)))
+    ys = ((-1, float(y0)), (0, (y0 + y1) / 2), (1, float(y1)))
+    return [(hx, hy, x, y) for hx, x in xs for hy, y in ys if hx or hy]
+
+
+def hit_handle(
+    region: bpy.types.Region, image: bpy.types.Image, rect: Rect, rx: float, ry: float
+) -> tuple[int, int] | None:
+    reach = HANDLE_HIT * overlay.ui_scale()
+    for hx, hy, x, y in rect_handles(rect):
+        px, py = overlay.image_to_region(region, image, x, y)
+        if abs(rx - px) <= reach and abs(ry - py) <= reach:
+            return hx, hy
+    return None
+
+
+def hit_rotate(
+    region: bpy.types.Region, image: bpy.types.Image, rect: Rect, rx: float, ry: float
+) -> bool:
+    reach = ROTATE_REACH * overlay.ui_scale()
+    for x, y in rect_quad(rect):
+        px, py = overlay.image_to_region(region, image, x, y)
+        if math.hypot(rx - px, ry - py) <= reach:
+            return True
+    return False
+
+
+def _quad_handles(corners: Quad) -> Quad:
+    mids = [
+        ((x + nx) / 2, (y + ny) / 2)
+        for (x, y), (nx, ny) in zip(corners, corners[1:] + corners[:1], strict=True)
+    ]
+    return list(corners) + mids
+
+
+def _draw_handles(points: Quad) -> None:
+    scale = overlay.ui_scale()
+    half = HANDLE_HALF * scale
+    border = half + scale
+    overlay.fill_rects(
+        [(x - border, y - border, x + border, y + border) for x, y in points], ANTS_DARK
+    )
+    overlay.fill_rects([(x - half, y - half, x + half, y + half) for x, y in points], HANDLE_FILL)
+
+
+def _select_tool_active(context: bpy.types.Context) -> bool:
+    workspace = context.workspace
+    if workspace is None:
+        return False
+    tool = workspace.tools.from_space_image_mode("PAINT", create=False)
+    return tool is not None and tool.idname in _SELECT_TOOLS
+
+
 def draw_texture_quad(corners: Quad, texture: gpu.types.GPUTexture) -> None:
     quad = [corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]]
     uvs = [(0, 0), (1, 0), (1, 1), (0, 0), (1, 1), (0, 1)]
@@ -426,12 +489,29 @@ def _draw_selection(region: bpy.types.Region, image: bpy.types.Image) -> None:
         overlay.fill_rects(_region_rects(affine, mask_row_rects(session.mask)), SOURCE_DIM)
         corners = _to_region(region, image, session.preview_quad)
         if session.texture is not None:
-            draw_texture_quad(corners, session.texture)
+            tex_corners = (
+                _to_region(region, image, session.tex_quad)
+                if session.tex_quad is not None
+                else corners
+            )
+            draw_texture_quad(tex_corners, session.texture)
         _draw_ants(_float_ants(affine, corners))
+        _draw_handles(_quad_handles(corners))
         return
     outline = session.drag_outline if session.drag_outline is not None else session.outline
     if outline is not None:
         _draw_ants(_segment_points(affine, outline))
+    if (
+        session.rect is not None
+        and session.drag_outline is None
+        and _select_tool_active(bpy.context)
+    ):
+        _draw_handles(
+            [
+                overlay.image_to_region(region, image, x, y)
+                for _, _, x, y in rect_handles(session.rect)
+            ]
+        )
 
 
 class BLIX_OT_select_marquee(bpy.types.Operator):
@@ -485,7 +565,17 @@ class BLIX_OT_select_marquee(bpy.types.Operator):
 
         if mode == "SET" and current is not None:
             height, width = current.shape
-            if 0 <= px < width and 0 <= py < height and current[py, px]:
+            inside = 0 <= px < width and 0 <= py < height and current[py, px]
+            if can_float(context) and session.rect is not None:
+                rx, ry = event.mouse_region_x, event.mouse_region_y
+                handle = hit_handle(region, image, session.rect, rx, ry)
+                if handle is not None:
+                    return cast(Any, bpy.ops).blix.select_scale(
+                        "INVOKE_DEFAULT", drag=True, handle_x=handle[0], handle_y=handle[1]
+                    )
+                if not inside and hit_rotate(region, image, session.rect, rx, ry):
+                    return cast(Any, bpy.ops).blix.select_rotate("INVOKE_DEFAULT", drag=True)
+            if inside:
                 return cast(Any, bpy.ops).blix.select_move("INVOKE_DEFAULT", drag=True)
 
         session.reset()

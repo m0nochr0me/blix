@@ -72,16 +72,29 @@ def _rotated_quad(rect: select.Rect, angle: float) -> select.Quad:
 def _commit_buffer(
     context: bpy.types.Context,
     image: bpy.types.Image,
-    rect: select.Rect,
+    origin: tuple[int, int],
     buffer: np.ndarray,
     float_mask: np.ndarray,
 ) -> None:
     clear_mask = select.session.mask
     assert clear_mask is not None
-    origin = centered_origin(rect, (buffer.shape[1], buffer.shape[0]))
     undo.record(context, image)
     select.apply_buffer(image, clear_mask, buffer, origin)
     select.finish_float(context, image, select.place_mask(image, float_mask, origin))
+
+
+def _preview_buffer(buffer: np.ndarray, origin: tuple[int, int]) -> None:
+    ox, oy = origin
+    select.session.texture = select.make_texture(buffer)
+    select.session.tex_quad = select.rect_quad((ox, oy, ox + buffer.shape[1], oy + buffer.shape[0]))
+
+
+def _confirm_event(event: bpy.types.Event, drag: bool) -> bool:
+    if event.type in {"RET", "NUMPAD_ENTER"} and event.value == "PRESS":
+        return True
+    if drag:
+        return event.type == "LEFTMOUSE" and event.value == "RELEASE"
+    return event.type == "LEFTMOUSE" and event.value == "PRESS"
 
 
 class BLIX_OT_select_flip(bpy.types.Operator):
@@ -132,7 +145,8 @@ class BLIX_OT_select_rotate90(bpy.types.Operator):
         assert image is not None and rect is not None and mask is not None
         buffer, sub = select.lift(image, mask, rect)
         rotated = rotate90_buffer(buffer, self.turns)
-        _commit_buffer(context, image, rect, rotated, rotate90_buffer(sub, self.turns))
+        origin = centered_origin(rect, (rotated.shape[1], rotated.shape[0]))
+        _commit_buffer(context, image, origin, rotated, rotate90_buffer(sub, self.turns))
         return {"FINISHED"}
 
 
@@ -143,8 +157,14 @@ class BLIX_OT_select_scale(bpy.types.Operator):
     bl_label = "Scale Selection"
     bl_options = {"REGISTER", "INTERNAL"}
 
+    drag: bpy.props.BoolProperty(default=False, options={"SKIP_SAVE", "HIDDEN"})
+    handle_x: bpy.props.IntProperty(default=0, min=-1, max=1, options={"SKIP_SAVE", "HIDDEN"})
+    handle_y: bpy.props.IntProperty(default=0, min=-1, max=1, options={"SKIP_SAVE", "HIDDEN"})
+
     _start_dist: float
-    _factor: float
+    _size: tuple[int, int]
+    _origin: tuple[int, int]
+    _moved: bool
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -159,15 +179,40 @@ class BLIX_OT_select_scale(bpy.types.Operator):
         region = context.region
         assert image is not None and rect is not None and mask is not None and region is not None
         select.start_float(image, mask, rect)
-        cx, cy = _rect_center(rect)
-        mx, my = select.mouse_pixel(region, image, event)
-        self._start_dist = max(math.hypot(mx - cx, my - cy), 1e-3)
-        self._factor = 1.0
+        self._size = (rect[2] - rect[0], rect[3] - rect[1])
+        self._origin = (rect[0], rect[1])
+        self._moved = False
+        if not (self.handle_x or self.handle_y):
+            cx, cy = _rect_center(rect)
+            mx, my = select.mouse_pixel(region, image, event)
+            self._start_dist = max(math.hypot(mx - cx, my - cy), 1e-3)
         window_manager = context.window_manager
         assert window_manager is not None
         window_manager.modal_handler_add(self)
         overlay.tag_redraw(context)
         return {"RUNNING_MODAL"}
+
+    def _update(self, rect: select.Rect, mx: float, my: float) -> None:
+        if self.handle_x or self.handle_y:
+            x0, y0, x1, y1 = rect
+            if self.handle_x > 0:
+                x1 = max(round(mx), rect[0] + 1)
+            elif self.handle_x < 0:
+                x0 = min(round(mx), rect[2] - 1)
+            if self.handle_y > 0:
+                y1 = max(round(my), rect[1] + 1)
+            elif self.handle_y < 0:
+                y0 = min(round(my), rect[3] - 1)
+            self._size = (x1 - x0, y1 - y0)
+            self._origin = (x0, y0)
+        else:
+            cx, cy = _rect_center(rect)
+            factor = max(math.hypot(mx - cx, my - cy) / self._start_dist, 0.01)
+            self._size = (
+                max(1, int(math.floor((rect[2] - rect[0]) * factor + 0.5))),
+                max(1, int(math.floor((rect[3] - rect[1]) * factor + 0.5))),
+            )
+            self._origin = centered_origin(rect, self._size)
 
     def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
         image = select.edit_image(context)
@@ -178,30 +223,32 @@ class BLIX_OT_select_scale(bpy.types.Operator):
         assert region is not None
 
         if event.type == "MOUSEMOVE":
-            cx, cy = _rect_center(rect)
+            self._moved = True
             mx, my = select.mouse_pixel(region, image, event)
-            self._factor = max(math.hypot(mx - cx, my - cy) / self._start_dist, 0.01)
-            half_w = (rect[2] - rect[0]) * self._factor / 2
-            half_h = (rect[3] - rect[1]) * self._factor / 2
-            select.session.preview_quad = [
-                (cx - half_w, cy - half_h),
-                (cx + half_w, cy - half_h),
-                (cx + half_w, cy + half_h),
-                (cx - half_w, cy + half_h),
-            ]
+            self._update(rect, mx, my)
+            scaled = scale_buffer_nn(select.session.buffer, self._size)
+            _preview_buffer(scaled, self._origin)
+            select.session.preview_quad = select.rect_quad(
+                (
+                    self._origin[0],
+                    self._origin[1],
+                    self._origin[0] + self._size[0],
+                    self._origin[1] + self._size[1],
+                )
+            )
             overlay.tag_redraw(context)
             return {"RUNNING_MODAL"}
 
-        if (event.type == "LEFTMOUSE" and event.value == "PRESS") or (
-            event.type in {"RET", "NUMPAD_ENTER"} and event.value == "PRESS"
-        ):
+        if _confirm_event(event, self.drag):
+            if self.drag and not self._moved:
+                select.session.drop_float()
+                overlay.tag_redraw(context)
+                return {"CANCELLED"}
             float_mask = select.session.float_mask
             assert float_mask is not None
-            new_w = max(1, int(math.floor((rect[2] - rect[0]) * self._factor + 0.5)))
-            new_h = max(1, int(math.floor((rect[3] - rect[1]) * self._factor + 0.5)))
-            scaled = scale_buffer_nn(select.session.buffer, (new_w, new_h))
+            scaled = scale_buffer_nn(select.session.buffer, self._size)
             _commit_buffer(
-                context, image, rect, scaled, scale_buffer_nn(float_mask, (new_w, new_h))
+                context, image, self._origin, scaled, scale_buffer_nn(float_mask, self._size)
             )
             return {"FINISHED"}
 
@@ -220,8 +267,11 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
     bl_label = "Rotate Selection"
     bl_options = {"REGISTER", "INTERNAL"}
 
+    drag: bpy.props.BoolProperty(default=False, options={"SKIP_SAVE", "HIDDEN"})
+
     _start_angle: float
     _angle: float
+    _moved: bool
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -240,6 +290,7 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
         mx, my = select.mouse_pixel(region, image, event)
         self._start_angle = math.atan2(my - cy, mx - cx)
         self._angle = 0.0
+        self._moved = False
         window_manager = context.window_manager
         assert window_manager is not None
         window_manager.modal_handler_add(self)
@@ -255,23 +306,32 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
         assert region is not None
 
         if event.type == "MOUSEMOVE":
+            self._moved = True
             cx, cy = _rect_center(rect)
             mx, my = select.mouse_pixel(region, image, event)
             angle = math.atan2(my - cy, mx - cx) - self._start_angle
             if event.ctrl:
                 angle = round(angle / SNAP_ANGLE) * SNAP_ANGLE
             self._angle = angle
+            rotated = rotate_buffer_nn(select.session.buffer, angle)
+            origin = centered_origin(rect, (rotated.shape[1], rotated.shape[0]))
+            _preview_buffer(rotated, origin)
             select.session.preview_quad = _rotated_quad(rect, angle)
             overlay.tag_redraw(context)
             return {"RUNNING_MODAL"}
 
-        if (event.type == "LEFTMOUSE" and event.value == "PRESS") or (
-            event.type in {"RET", "NUMPAD_ENTER"} and event.value == "PRESS"
-        ):
+        if _confirm_event(event, self.drag):
+            if self.drag and not self._moved:
+                select.session.drop_float()
+                overlay.tag_redraw(context)
+                return {"CANCELLED"}
             float_mask = select.session.float_mask
             assert float_mask is not None
             rotated = rotate_buffer_nn(select.session.buffer, self._angle)
-            _commit_buffer(context, image, rect, rotated, rotate_buffer_nn(float_mask, self._angle))
+            origin = centered_origin(rect, (rotated.shape[1], rotated.shape[0]))
+            _commit_buffer(
+                context, image, origin, rotated, rotate_buffer_nn(float_mask, self._angle)
+            )
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:
