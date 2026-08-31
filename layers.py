@@ -155,9 +155,15 @@ def sync_canvas(canvas: bpy.types.Image) -> None:
 
 
 def composite(canvas: bpy.types.Image) -> None:
-    select.write_pixels(canvas, composite_pixels(canvas))
-    _composite_cache[canvas.name] = select.read_pixels(canvas)
-    undo.defer(canvas)
+    """Recomposite canvas; skip the undo record when output matches canvas pixels."""
+    pixels = composite_pixels(canvas)
+    if (pixels != select.read_pixels(canvas)).any():
+        select.write_pixels(canvas, pixels)
+        _composite_cache[canvas.name] = select.read_pixels(canvas)
+        undo.defer(canvas)
+        return
+    _composite_cache[canvas.name] = pixels
+    push_history(canvas)
 
 
 def _layer_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
