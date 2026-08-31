@@ -1,4 +1,4 @@
-"""Nearest-neighbor transforms on the floating selection buffer."""
+"""RotSprite transforms on the floating selection buffer."""
 
 import math
 from typing import TYPE_CHECKING
@@ -22,28 +22,57 @@ def flip_buffer(buffer: np.ndarray, horizontal: bool) -> np.ndarray:
     return buffer[:, ::-1].copy() if horizontal else buffer[::-1].copy()
 
 
-def scale_buffer_nn(buffer: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+def scale2x(buffer: np.ndarray) -> np.ndarray:
+    """One EPX pass: doubles resolution, copies existing pixels only."""
+    height, width = buffer.shape[:2]
+    up = np.concatenate([buffer[:1], buffer[:-1]], axis=0)
+    down = np.concatenate([buffer[1:], buffer[-1:]], axis=0)
+    left = np.concatenate([buffer[:, :1], buffer[:, :-1]], axis=1)
+    right = np.concatenate([buffer[:, 1:], buffer[:, -1:]], axis=1)
+    ul = (up == left).all(axis=-1)
+    ur = (up == right).all(axis=-1)
+    dl = (down == left).all(axis=-1)
+    dr = (down == right).all(axis=-1)
+    out = np.empty((height * 2, width * 2, buffer.shape[2]), dtype=buffer.dtype)
+    out[0::2, 0::2] = np.where((ul & ~dl & ~ur)[..., None], up, buffer)
+    out[0::2, 1::2] = np.where((ur & ~ul & ~dr)[..., None], right, buffer)
+    out[1::2, 0::2] = np.where((dl & ~dr & ~ul)[..., None], left, buffer)
+    out[1::2, 1::2] = np.where((dr & ~ur & ~dl)[..., None], down, buffer)
+    return out
+
+
+def upscale8x(buffer: np.ndarray) -> np.ndarray:
+    return scale2x(scale2x(scale2x(buffer)))
+
+
+def scale_rotsprite(up8: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     new_w, new_h = size
-    height, width = buffer.shape[:2]
-    ys = np.minimum(((np.arange(new_h) + 0.5) * height / new_h).astype(np.int64), height - 1)
-    xs = np.minimum(((np.arange(new_w) + 0.5) * width / new_w).astype(np.int64), width - 1)
-    return buffer[ys[:, None], xs[None, :]].copy()
+    height, width = up8.shape[0] // 8, up8.shape[1] // 8
+    ys = np.minimum(
+        ((np.arange(new_h) + 0.5) * height * 8 / new_h).astype(np.int64), height * 8 - 1
+    )
+    xs = np.minimum(((np.arange(new_w) + 0.5) * width * 8 / new_w).astype(np.int64), width * 8 - 1)
+    return up8[ys[:, None], xs[None, :]].copy()
 
 
-def rotate_buffer_nn(buffer: np.ndarray, angle: float) -> np.ndarray:
-    height, width = buffer.shape[:2]
+def rotate_rotsprite(up8: np.ndarray, angle: float) -> np.ndarray:
+    height, width = up8.shape[0] // 8, up8.shape[1] // 8
     cos_a, sin_a = math.cos(angle), math.sin(angle)
     new_w = max(1, math.ceil(abs(width * cos_a) + abs(height * sin_a)))
     new_h = max(1, math.ceil(abs(width * sin_a) + abs(height * cos_a)))
-    out = np.zeros((new_h, new_w, *buffer.shape[2:]), dtype=buffer.dtype)
+    out = np.zeros((new_h, new_w, up8.shape[2]), dtype=up8.dtype)
     yy, xx = np.mgrid[0:new_h, 0:new_w]
     dx = xx + 0.5 - new_w / 2
     dy = yy + 0.5 - new_h / 2
-    sx = np.floor(cos_a * dx + sin_a * dy + width / 2).astype(np.int64)
-    sy = np.floor(-sin_a * dx + cos_a * dy + height / 2).astype(np.int64)
-    mask = (sx >= 0) & (sx < width) & (sy >= 0) & (sy < height)
-    out[mask] = buffer[sy[mask], sx[mask]]
+    sx = np.floor((cos_a * dx + sin_a * dy + width / 2) * 8).astype(np.int64)
+    sy = np.floor((-sin_a * dx + cos_a * dy + height / 2) * 8).astype(np.int64)
+    inside = (sx >= 0) & (sx < width * 8) & (sy >= 0) & (sy < height * 8)
+    out[inside] = up8[sy[inside], sx[inside]]
     return out
+
+
+def stack_float(buffer: np.ndarray, float_mask: np.ndarray) -> np.ndarray:
+    return np.dstack([buffer, float_mask.astype(buffer.dtype)])
 
 
 def centered_origin(rect: select.Rect, size: tuple[int, int]) -> tuple[int, int]:
@@ -165,10 +194,18 @@ class BLIX_OT_select_scale(bpy.types.Operator):
     _size: tuple[int, int]
     _origin: tuple[int, int]
     _moved: bool
+    _stacked: np.ndarray
+    _up8: np.ndarray
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
         return select.can_float(context)
+
+    def _resampled(self) -> np.ndarray:
+        height, width = self._stacked.shape[:2]
+        if self._size == (width, height):
+            return self._stacked
+        return scale_rotsprite(self._up8, self._size)
 
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
@@ -179,6 +216,9 @@ class BLIX_OT_select_scale(bpy.types.Operator):
         region = context.region
         assert image is not None and rect is not None and mask is not None and region is not None
         select.start_float(image, mask, rect)
+        assert select.session.buffer is not None and select.session.float_mask is not None
+        self._stacked = stack_float(select.session.buffer, select.session.float_mask)
+        self._up8 = upscale8x(self._stacked)
         self._size = (rect[2] - rect[0], rect[3] - rect[1])
         self._origin = (rect[0], rect[1])
         self._moved = False
@@ -226,8 +266,7 @@ class BLIX_OT_select_scale(bpy.types.Operator):
             self._moved = True
             mx, my = select.mouse_pixel(region, image, event)
             self._update(rect, mx, my)
-            scaled = scale_buffer_nn(select.session.buffer, self._size)
-            _preview_buffer(scaled, self._origin)
+            _preview_buffer(self._resampled()[:, :, :4], self._origin)
             select.session.preview_quad = select.rect_quad(
                 (
                     self._origin[0],
@@ -244,12 +283,8 @@ class BLIX_OT_select_scale(bpy.types.Operator):
                 select.session.drop_float()
                 overlay.tag_redraw(context)
                 return {"CANCELLED"}
-            float_mask = select.session.float_mask
-            assert float_mask is not None
-            scaled = scale_buffer_nn(select.session.buffer, self._size)
-            _commit_buffer(
-                context, image, self._origin, scaled, scale_buffer_nn(float_mask, self._size)
-            )
+            scaled = self._resampled()
+            _commit_buffer(context, image, self._origin, scaled[:, :, :4], scaled[:, :, 4] > 0.5)
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:
@@ -272,10 +307,17 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
     _start_angle: float
     _angle: float
     _moved: bool
+    _stacked: np.ndarray
+    _up8: np.ndarray
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
         return select.can_float(context)
+
+    def _rotated(self) -> np.ndarray:
+        if self._angle == 0.0:
+            return self._stacked
+        return rotate_rotsprite(self._up8, self._angle)
 
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
@@ -286,6 +328,9 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
         region = context.region
         assert image is not None and rect is not None and mask is not None and region is not None
         select.start_float(image, mask, rect)
+        assert select.session.buffer is not None and select.session.float_mask is not None
+        self._stacked = stack_float(select.session.buffer, select.session.float_mask)
+        self._up8 = upscale8x(self._stacked)
         cx, cy = _rect_center(rect)
         mx, my = select.mouse_pixel(region, image, event)
         self._start_angle = math.atan2(my - cy, mx - cx)
@@ -313,9 +358,9 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
             if event.ctrl:
                 angle = round(angle / SNAP_ANGLE) * SNAP_ANGLE
             self._angle = angle
-            rotated = rotate_buffer_nn(select.session.buffer, angle)
+            rotated = self._rotated()
             origin = centered_origin(rect, (rotated.shape[1], rotated.shape[0]))
-            _preview_buffer(rotated, origin)
+            _preview_buffer(rotated[:, :, :4], origin)
             select.session.preview_quad = _rotated_quad(rect, angle)
             overlay.tag_redraw(context)
             return {"RUNNING_MODAL"}
@@ -325,13 +370,9 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
                 select.session.drop_float()
                 overlay.tag_redraw(context)
                 return {"CANCELLED"}
-            float_mask = select.session.float_mask
-            assert float_mask is not None
-            rotated = rotate_buffer_nn(select.session.buffer, self._angle)
+            rotated = self._rotated()
             origin = centered_origin(rect, (rotated.shape[1], rotated.shape[0]))
-            _commit_buffer(
-                context, image, origin, rotated, rotate_buffer_nn(float_mask, self._angle)
-            )
+            _commit_buffer(context, image, origin, rotated[:, :, :4], rotated[:, :, 4] > 0.5)
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:
