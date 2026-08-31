@@ -635,7 +635,7 @@ class BLIX_OT_select_marquee(bpy.types.Operator):
 
 
 class BLIX_OT_select_move(bpy.types.Operator):
-    """Move selected pixels; Enter or click confirms, arrows nudge, Esc cancels"""
+    """Move selected pixels; Ctrl locks to axis, arrows nudge, Enter or click confirms"""
 
     bl_idname = "blix.select_move"
     bl_label = "Move Selection"
@@ -691,10 +691,13 @@ class BLIX_OT_select_move(bpy.types.Operator):
 
         if event.type == "MOUSEMOVE":
             x, y = mouse_pixel(region, image, event)
-            session.offset = (
-                round(x - self._start[0]) + self._nudge[0],
-                round(y - self._start[1]) + self._nudge[1],
-            )
+            dx, dy = x - self._start[0], y - self._start[1]
+            if event.ctrl:
+                if abs(dx) >= abs(dy):
+                    dy = 0.0
+                else:
+                    dx = 0.0
+            session.offset = (round(dx) + self._nudge[0], round(dy) + self._nudge[1])
             self._update_quad()
             overlay.tag_redraw(context)
             return {"RUNNING_MODAL"}

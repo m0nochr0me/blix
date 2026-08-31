@@ -180,7 +180,7 @@ class BLIX_OT_select_rotate90(bpy.types.Operator):
 
 
 class BLIX_OT_select_scale(bpy.types.Operator):
-    """Scale selected pixels; Enter or click confirms, Esc cancels"""
+    """Scale selected pixels; Shift locks aspect ratio, Enter or click confirms, Esc cancels"""
 
     bl_idname = "blix.select_scale"
     bl_label = "Scale Selection"
@@ -207,6 +207,34 @@ class BLIX_OT_select_scale(bpy.types.Operator):
             return self._stacked
         return scale_rotsprite(self._up8, self._size)
 
+    def _ratio_rect(self, rect: select.Rect, dragged: select.Rect) -> select.Rect:
+        """Snap dragged rect to source aspect: opposite corner/edge anchored, free axis centered."""
+        x0, y0, x1, y1 = dragged
+        orig_w, orig_h = rect[2] - rect[0], rect[3] - rect[1]
+        fx = (x1 - x0) / orig_w
+        fy = (y1 - y0) / orig_h
+        if self.handle_x and self.handle_y:
+            factor = fx if abs(fx - 1) >= abs(fy - 1) else fy
+        else:
+            factor = fx if self.handle_x else fy
+        new_w = max(1, int(math.floor(orig_w * factor + 0.5)))
+        new_h = max(1, int(math.floor(orig_h * factor + 0.5)))
+        if self.handle_x > 0:
+            x1 = x0 + new_w
+        elif self.handle_x < 0:
+            x0 = x1 - new_w
+        else:
+            x0 = int(math.floor((rect[0] + rect[2]) / 2 - new_w / 2 + 0.5))
+            x1 = x0 + new_w
+        if self.handle_y > 0:
+            y1 = y0 + new_h
+        elif self.handle_y < 0:
+            y0 = y1 - new_h
+        else:
+            y0 = int(math.floor((rect[1] + rect[3]) / 2 - new_h / 2 + 0.5))
+            y1 = y0 + new_h
+        return (x0, y0, x1, y1)
+
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
     ) -> set[OperatorReturnItems]:
@@ -232,7 +260,7 @@ class BLIX_OT_select_scale(bpy.types.Operator):
         overlay.tag_redraw(context)
         return {"RUNNING_MODAL"}
 
-    def _update(self, rect: select.Rect, mx: float, my: float) -> None:
+    def _update(self, rect: select.Rect, mx: float, my: float, ratio: bool) -> None:
         if self.handle_x or self.handle_y:
             x0, y0, x1, y1 = rect
             if self.handle_x > 0:
@@ -243,6 +271,8 @@ class BLIX_OT_select_scale(bpy.types.Operator):
                 y1 = max(round(my), rect[1] + 1)
             elif self.handle_y < 0:
                 y0 = min(round(my), rect[3] - 1)
+            if ratio:
+                x0, y0, x1, y1 = self._ratio_rect(rect, (x0, y0, x1, y1))
             self._size = (x1 - x0, y1 - y0)
             self._origin = (x0, y0)
         else:
@@ -265,7 +295,7 @@ class BLIX_OT_select_scale(bpy.types.Operator):
         if event.type == "MOUSEMOVE":
             self._moved = True
             mx, my = select.mouse_pixel(region, image, event)
-            self._update(rect, mx, my)
+            self._update(rect, mx, my, event.shift)
             _preview_buffer(self._resampled()[:, :, :4], self._origin)
             select.session.preview_quad = select.rect_quad(
                 (
