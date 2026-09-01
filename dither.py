@@ -334,7 +334,7 @@ def register() -> None:
         description="Dither to transparency instead of background color",
         default=True,
     )
-    bpy.utils.register_tool(BLIX_TOOL_dither_gradient, after="blix.shape_tool")
+    bpy.utils.register_tool(BLIX_TOOL_dither_gradient)
     bpy.utils.register_tool(BLIX_TOOL_dither_brush, after="blix.dither_gradient_tool")
     overlay.extra_draws.append(preview.draw)
 

@@ -85,6 +85,10 @@ class BLIX_OT_draw_shape(bpy.types.Operator):
     bl_label = "Draw Shape"
     bl_options = {"REGISTER", "INTERNAL"}
 
+    kind: bpy.props.EnumProperty(
+        items=KIND_ITEMS, default="RECT", options={"SKIP_SAVE", "HIDDEN"}
+    )
+
     _anchor: tuple[int, int]
     _color: np.ndarray
     _coverage: np.ndarray | None
@@ -143,7 +147,7 @@ class BLIX_OT_draw_shape(bpy.types.Operator):
         rect, ends = self._geometry(cursor, event)
         coverage = shape_coverage(
             size,
-            props.shape_kind(scene),
+            self.kind,
             rect,
             ends,
             props.shape_filled(scene),
@@ -201,18 +205,60 @@ class BLIX_OT_draw_shape(bpy.types.Operator):
         overlay.tag_redraw(context)
 
 
-class BLIX_TOOL_shape(bpy.types.WorkSpaceTool):
+def _tool_keymap(kind: str) -> tuple[Any, ...]:
+    draw = "blix.draw_shape"
+    return (
+        (draw, {"type": "LEFTMOUSE", "value": "PRESS"}, {"properties": [("kind", kind)]}),
+        (
+            draw,
+            {"type": "LEFTMOUSE", "value": "PRESS", "ctrl": True},
+            {"properties": [("kind", kind)]},
+        ),
+    )
+
+
+class BLIX_TOOL_shape_rect(bpy.types.WorkSpaceTool):
     bl_space_type = "IMAGE_EDITOR"
     bl_context_mode = "PAINT"
-    bl_idname = "blix.shape_tool"
-    bl_label = "Blix Shape"
-    bl_description = "Draw lines, rectangles, ellipses and hexagons"
+    bl_idname = "blix.shape_rect"
+    bl_label = "Blix Rectangle"
+    bl_description = "Draw axis-aligned rectangles"
     bl_icon = "ops.gpencil.primitive_box"
     bl_widget = None
-    bl_keymap = (
-        ("blix.draw_shape", {"type": "LEFTMOUSE", "value": "PRESS"}, None),
-        ("blix.draw_shape", {"type": "LEFTMOUSE", "value": "PRESS", "ctrl": True}, None),
-    )
+    bl_keymap = _tool_keymap("RECT")
+
+
+class BLIX_TOOL_shape_ellipse(bpy.types.WorkSpaceTool):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_context_mode = "PAINT"
+    bl_idname = "blix.shape_ellipse"
+    bl_label = "Blix Ellipse"
+    bl_description = "Draw ellipses inscribed in the drag rectangle"
+    bl_icon = "ops.gpencil.primitive_circle"
+    bl_widget = None
+    bl_keymap = _tool_keymap("ELLIPSE")
+
+
+class BLIX_TOOL_shape_hexagon(bpy.types.WorkSpaceTool):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_context_mode = "PAINT"
+    bl_idname = "blix.shape_hexagon"
+    bl_label = "Blix Hexagon"
+    bl_description = "Draw hexagons inscribed in the drag rectangle"
+    bl_icon = "ops.gpencil.primitive_polyline"
+    bl_widget = None
+    bl_keymap = _tool_keymap("HEXAGON")
+
+
+class BLIX_TOOL_shape_line(bpy.types.WorkSpaceTool):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_context_mode = "PAINT"
+    bl_idname = "blix.shape_line"
+    bl_label = "Blix Line"
+    bl_description = "Draw straight lines between the drag endpoints"
+    bl_icon = "ops.gpencil.primitive_line"
+    bl_widget = None
+    bl_keymap = _tool_keymap("LINE")
 
 
 _classes = (BLIX_OT_draw_shape,)
@@ -222,9 +268,6 @@ def register() -> None:
     for cls in _classes:
         bpy.utils.register_class(cls)
     scene_cls = cast(Any, bpy.types.Scene)
-    scene_cls.blix_shape_kind = bpy.props.EnumProperty(
-        name="Shape", items=KIND_ITEMS, default="RECT"
-    )
     scene_cls.blix_shape_filled = bpy.props.BoolProperty(
         name="Filled", description="Fill the shape instead of drawing a 1 px outline", default=False
     )
@@ -233,17 +276,22 @@ def register() -> None:
         description="Hexagon with a vertex on top instead of a flat edge",
         default=True,
     )
-    bpy.utils.register_tool(BLIX_TOOL_shape)
+    bpy.utils.register_tool(BLIX_TOOL_shape_rect, group=True)
+    bpy.utils.register_tool(BLIX_TOOL_shape_ellipse, after="blix.shape_rect")
+    bpy.utils.register_tool(BLIX_TOOL_shape_hexagon, after="blix.shape_ellipse")
+    bpy.utils.register_tool(BLIX_TOOL_shape_line, after="blix.shape_hexagon")
     overlay.extra_draws.append(preview.draw)
 
 
 def unregister() -> None:
     overlay.extra_draws.remove(preview.draw)
-    bpy.utils.unregister_tool(BLIX_TOOL_shape)
+    bpy.utils.unregister_tool(BLIX_TOOL_shape_line)
+    bpy.utils.unregister_tool(BLIX_TOOL_shape_hexagon)
+    bpy.utils.unregister_tool(BLIX_TOOL_shape_ellipse)
+    bpy.utils.unregister_tool(BLIX_TOOL_shape_rect)
     scene_cls = cast(Any, bpy.types.Scene)
     del scene_cls.blix_shape_hex_pointy
     del scene_cls.blix_shape_filled
-    del scene_cls.blix_shape_kind
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)
     preview.clear()

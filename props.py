@@ -69,10 +69,6 @@ def mirror_v(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_mirror_v
 
 
-def shape_kind(scene: bpy.types.Scene) -> str:
-    return cast(Any, scene).blix_shape_kind
-
-
 def shape_filled(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_shape_filled
 

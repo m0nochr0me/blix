@@ -116,9 +116,11 @@ class BLIX_PT_shapes(bpy.types.Panel):
         assert layout is not None
         assert scene is not None
         col = layout.column()
-        col.prop(scene, "blix_shape_kind")
         col.prop(scene, "blix_shape_filled")
-        if scene.blix_shape_kind == "HEXAGON":
+        workspace = context.workspace
+        assert workspace is not None
+        tool = workspace.tools.from_space_image_mode("PAINT", create=False)
+        if tool is not None and tool.idname == "blix.shape_hexagon":
             col.prop(scene, "blix_shape_hex_pointy")
 
 
