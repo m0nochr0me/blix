@@ -77,7 +77,8 @@ class BlixPreferences(bpy.types.AddonPreferences):
     )
     ctrl_erase: bpy.props.BoolProperty(
         name="Ctrl+LMB Erases",
-        description="Paint with Erase Alpha blend while Ctrl is held, instead of background color",
+        description="Erase the active layer with a round brush while Ctrl is held,"
+        " instead of painting the background color",
         default=False,
     )
     shift_line: bpy.props.BoolProperty(
