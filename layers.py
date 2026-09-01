@@ -161,12 +161,10 @@ def _sync_target(canvas: bpy.types.Image) -> Any:
 def sync_canvas(canvas: bpy.types.Image) -> None:
     target = _sync_target(canvas)
     _sync_targets[canvas.name] = props.layers_index(canvas)
-    cached = _composite_cache.get(canvas.name)
-    if cached is None:
-        return
     current = select.read_pixels(canvas)
-    if cached.shape != current.shape:
-        _composite_cache.pop(canvas.name)
+    cached = _composite_cache.get(canvas.name)
+    if cached is None or cached.shape != current.shape:
+        _composite_cache[canvas.name] = current
         return
     mask = np.any(current != cached, axis=2)
     if not mask.any():
