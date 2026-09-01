@@ -378,6 +378,8 @@ class BLIX_OT_stroke_sync(bpy.types.Operator):
         global _stroke_canvas
         image = select.edit_image(context)
         assert image is not None
+        if image.name not in _composite_cache:
+            _composite_cache[image.name] = select.read_pixels(image)
         _stroke_canvas = image.name
         if not bpy.app.timers.is_registered(_stroke_tick):
             bpy.app.timers.register(_stroke_tick, first_interval=POLL)
