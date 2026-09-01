@@ -91,3 +91,7 @@ def dither_density(scene: bpy.types.Scene) -> float:
 
 def dither_brush_size(scene: bpy.types.Scene) -> int:
     return cast(Any, scene).blix_dither_brush_size
+
+
+def dither_transparent(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_dither_transparent

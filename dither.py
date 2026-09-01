@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
 
 SNAP_ANGLE = math.pi / 4
+TRANSPARENT = np.zeros(4, dtype=np.float32)
 
 preview = select.Preview()
 
@@ -87,6 +88,25 @@ def dither_stamp(
     pixels[y0:y1, x0:x1] = region
 
 
+def _apply_buffer(
+    pixels: np.ndarray, rect: select.Rect, buffer: np.ndarray, clip_mask: np.ndarray | None
+) -> None:
+    region = pixels[rect[1] : rect[3], rect[0] : rect[2]]
+    write = buffer[:, :, 3] > 0.0
+    if clip_mask is not None:
+        write &= clip_mask[rect[1] : rect[3], rect[0] : rect[2]]
+    region[write] = buffer[write]
+
+
+def _gradient_colors(context: bpy.types.Context) -> tuple[np.ndarray, np.ndarray]:
+    color_a, color_b = paint.brush_colors(context)
+    scene = context.scene
+    assert scene is not None
+    if props.dither_transparent(scene):
+        return color_a, TRANSPARENT
+    return color_a, color_b
+
+
 def _target_clip(image: bpy.types.Image) -> tuple[select.Rect, np.ndarray | None]:
     if select.session.image_name == image.name and select.session.rect is not None:
         return select.session.rect, select.session.mask
@@ -123,7 +143,7 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
         scene = context.scene
         assert scene is not None
         rect, clip_mask = _target_clip(image)
-        color_a, color_b = paint.brush_colors(context)
+        color_a, color_b = _gradient_colors(context)
         buffer = dither_region(
             rect, self._start, self._end, color_a, color_b, props.dither_size(scene)
         )
@@ -168,18 +188,13 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
     def _commit(self, context: bpy.types.Context, image: bpy.types.Image) -> None:
         scene = context.scene
         assert scene is not None
-        color_a, color_b = paint.brush_colors(context)
+        color_a, color_b = _gradient_colors(context)
         rect, clip_mask = _target_clip(image)
         pixels = select.read_pixels(image)
         buffer = dither_region(
             rect, self._start, self._end, color_a, color_b, props.dither_size(scene)
         )
-        region = pixels[rect[1] : rect[3], rect[0] : rect[2]]
-        if clip_mask is None:
-            region[:] = buffer
-        else:
-            sub = clip_mask[rect[1] : rect[3], rect[0] : rect[2]]
-            region[sub] = buffer[sub]
+        _apply_buffer(pixels, rect, buffer, clip_mask)
         undo.record(context, image)
         select.write_pixels(image, pixels)
         preview.clear()
@@ -208,7 +223,12 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
         assert region is not None
         self._snapshot = select.read_pixels(image).copy()
         primary, secondary = paint.brush_colors(context)
-        self._color = secondary if event.ctrl else primary
+        if event.ctrl:
+            scene = context.scene
+            assert scene is not None
+            self._color = TRANSPARENT if props.dither_transparent(scene) else secondary
+        else:
+            self._color = primary
         self._last = select.mouse_pixel(region, image, event)
         undo.record(context, image)
         self._stamp_to(context, image, self._last)
@@ -309,6 +329,11 @@ def register() -> None:
     scene_cls.blix_dither_brush_size = bpy.props.IntProperty(
         name="Brush Size", default=8, min=1, max=256
     )
+    scene_cls.blix_dither_transparent = bpy.props.BoolProperty(
+        name="Transparent",
+        description="Dither to transparency instead of background color",
+        default=True,
+    )
     bpy.utils.register_tool(BLIX_TOOL_dither_gradient, after="blix.shape_tool")
     bpy.utils.register_tool(BLIX_TOOL_dither_brush, after="blix.dither_gradient_tool")
     overlay.extra_draws.append(preview.draw)
@@ -319,6 +344,7 @@ def unregister() -> None:
     bpy.utils.unregister_tool(BLIX_TOOL_dither_brush)
     bpy.utils.unregister_tool(BLIX_TOOL_dither_gradient)
     scene_cls = cast(Any, bpy.types.Scene)
+    del scene_cls.blix_dither_transparent
     del scene_cls.blix_dither_brush_size
     del scene_cls.blix_dither_density
     del scene_cls.blix_dither_size

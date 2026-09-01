@@ -220,6 +220,7 @@ class BLIX_PT_dither(bpy.types.Panel):
         col.prop(scene, "blix_dither_size")
         col.prop(scene, "blix_dither_brush_size")
         col.prop(scene, "blix_dither_density")
+        col.prop(scene, "blix_dither_transparent")
 
 
 class BLIX_PT_palette(bpy.types.Panel):
