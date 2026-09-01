@@ -233,7 +233,7 @@ def register() -> None:
         description="Hexagon with a vertex on top instead of a flat edge",
         default=True,
     )
-    bpy.utils.register_tool(BLIX_TOOL_shape, after="blix.select_brush")
+    bpy.utils.register_tool(BLIX_TOOL_shape)
     overlay.extra_draws.append(preview.draw)
 
 

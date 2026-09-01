@@ -244,6 +244,32 @@ def stamp_disc(mask: np.ndarray, center: tuple[float, float], radius: float) -> 
     mask[y0:y1, x0:x1] |= (xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 <= radius * radius
 
 
+def wand_mask(pixels: np.ndarray, seed: tuple[int, int]) -> np.ndarray:
+    """Contiguous region of pixels matching the seed color exactly, 4-connected."""
+    sx, sy = seed
+    match = np.all(pixels == pixels[sy, sx], axis=2)
+    height, width = match.shape
+    mask = np.zeros((height, width), dtype=bool)
+    stack = [(sx, sy)]
+    while stack:
+        x, y = stack.pop()
+        if mask[y, x] or not match[y, x]:
+            continue
+        row = match[y]
+        stops = np.flatnonzero(~row[:x][::-1])
+        x0 = x - (int(stops[0]) if stops.size else x)
+        stops = np.flatnonzero(~row[x + 1 :])
+        x1 = x + (int(stops[0]) if stops.size else width - x - 1)
+        mask[y, x0 : x1 + 1] = True
+        for ny in (y - 1, y + 1):
+            if not 0 <= ny < height:
+                continue
+            run = match[ny, x0 : x1 + 1] & ~mask[ny, x0 : x1 + 1]
+            starts = np.flatnonzero(run & ~np.concatenate(([False], run[:-1])))
+            stack += [(x0 + int(nx), ny) for nx in starts]
+    return mask
+
+
 def shape_mask(size: Size, rect: Rect, shape: str) -> np.ndarray:
     return ellipse_mask(size, rect) if shape == "ELLIPSE" else rect_mask(size, rect)
 
@@ -866,6 +892,42 @@ class BLIX_OT_select_brush(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
 
+class BLIX_OT_select_wand(bpy.types.Operator):
+    """Click to select the contiguous region of one color; Shift adds, Ctrl subtracts"""
+
+    bl_idname = "blix.select_wand"
+    bl_label = "Select Wand"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    mode: bpy.props.EnumProperty(
+        items=_MODE_ITEMS, default="DEFAULT", options={"SKIP_SAVE", "HIDDEN"}
+    )
+
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set[OperatorReturnItems]:
+        image = edit_image(context)
+        if image is None or image.size[0] == 0 or image.size[1] == 0:
+            return {"PASS_THROUGH"}
+        region = context.region
+        assert region is not None
+        if guide_grab(region, image, event):
+            return {"PASS_THROUGH"}
+        x, y = mouse_pixel(region, image, event)
+        px, py = math.floor(x), math.floor(y)
+        width, height = image.size
+        if not (0 <= px < width and 0 <= py < height):
+            return {"PASS_THROUGH"}
+        mode = resolve_mode(context, self.mode)
+        base = session.mask if session.image_name == image.name else None
+        shape = wand_mask(read_pixels(pixel_target(image)), (px, py))
+        session.reset()
+        session.image_name = image.name
+        session.set_mask(combine_mask(base, shape, mode))
+        overlay.tag_redraw(context)
+        return {"FINISHED"}
+
+
 class BLIX_OT_select_move(bpy.types.Operator):
     """Move selected pixels; Ctrl locks to axis, arrows nudge, Enter or click confirms"""
 
@@ -1085,10 +1147,22 @@ class BLIX_TOOL_select_brush(bpy.types.WorkSpaceTool):
     bl_keymap = _gesture_keymap("blix.select_brush")
 
 
+class BLIX_TOOL_select_wand(bpy.types.WorkSpaceTool):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_context_mode = "PAINT"
+    bl_idname = "blix.select_wand"
+    bl_label = "Blix Select Wand"
+    bl_description = "Select a contiguous region of one color"
+    bl_icon = "ops.generic.select"
+    bl_widget = None
+    bl_keymap = _gesture_keymap("blix.select_wand")
+
+
 _classes = (
     BLIX_OT_select_marquee,
     BLIX_OT_select_lasso,
     BLIX_OT_select_brush,
+    BLIX_OT_select_wand,
     BLIX_OT_select_move,
     BLIX_OT_select_clear,
 )
@@ -1115,15 +1189,17 @@ def register() -> None:
         min=1,
         max=256,
     )
-    bpy.utils.register_tool(BLIX_TOOL_select, separator=True)
+    bpy.utils.register_tool(BLIX_TOOL_select, separator=True, group=True)
     bpy.utils.register_tool(BLIX_TOOL_select_ellipse, after="blix.select_box")
     bpy.utils.register_tool(BLIX_TOOL_select_lasso, after="blix.select_ellipse")
     bpy.utils.register_tool(BLIX_TOOL_select_brush, after="blix.select_lasso")
+    bpy.utils.register_tool(BLIX_TOOL_select_wand, after="blix.select_brush")
     overlay.extra_draws.append(_draw_selection)
 
 
 def unregister() -> None:
     overlay.extra_draws.remove(_draw_selection)
+    bpy.utils.unregister_tool(BLIX_TOOL_select_wand)
     bpy.utils.unregister_tool(BLIX_TOOL_select_brush)
     bpy.utils.unregister_tool(BLIX_TOOL_select_lasso)
     bpy.utils.unregister_tool(BLIX_TOOL_select_ellipse)
