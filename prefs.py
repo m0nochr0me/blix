@@ -44,6 +44,11 @@ def ctrl_erase() -> bool:
     return False if settings is None else bool(settings.ctrl_erase)
 
 
+def shift_line() -> bool:
+    settings = get()
+    return True if settings is None else bool(settings.shift_line)
+
+
 def _color_property(name: str, label: str) -> Any:
     return bpy.props.FloatVectorProperty(
         name=label,
@@ -75,6 +80,12 @@ class BlixPreferences(bpy.types.AddonPreferences):
         description="Paint with Erase Alpha blend while Ctrl is held, instead of background color",
         default=False,
     )
+    shift_line: bpy.props.BoolProperty(
+        name="Shift Line Mode",
+        description="Hold Shift with the brush to preview a line from the last painted point,"
+        " LMB paints it",
+        default=True,
+    )
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
@@ -84,6 +95,7 @@ class BlixPreferences(bpy.types.AddonPreferences):
             column.prop(self, name)
         layout.prop(self, "ruler_size")
         layout.prop(self, "ctrl_erase")
+        layout.prop(self, "shift_line")
         _draw_keymap(layout, context)
 
 

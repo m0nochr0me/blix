@@ -78,7 +78,7 @@ class _Watch:
 _watch: _Watch | None = None
 
 
-def _painting() -> bool:
+def painting() -> bool:
     window_manager = bpy.context.window_manager
     if window_manager is None:
         return False
@@ -91,7 +91,7 @@ def _painting() -> bool:
 
 def busy() -> bool:
     """A native stroke is running or mirror writes are still settling."""
-    return _watch is not None or _painting()
+    return _watch is not None or painting()
 
 
 def _tick() -> float | None:
@@ -112,7 +112,7 @@ def _tick() -> float | None:
         select.write_pixels(image, painted)
         watch.dirty = True
         overlay.tag_redraw(bpy.context)
-    if _painting():
+    if painting():
         return POLL
     _watch = None
     if watch.dirty:
