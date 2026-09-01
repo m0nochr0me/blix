@@ -35,6 +35,47 @@ def _brush_tool_active(context: bpy.types.Context) -> bool:
     return tool is not None and tool.idname == "builtin.brush"
 
 
+def _line_size(context: bpy.types.Context) -> int:
+    tool_settings = context.tool_settings
+    settings = tool_settings.image_paint if tool_settings is not None else None
+    if settings is None:
+        return 1
+    unified = cast(Any, settings).unified_paint_settings
+    if unified is not None and unified.use_unified_size:
+        return max(int(unified.size), 1)
+    return max(int(settings.brush.size), 1) if settings.brush is not None else 1
+
+
+def thick_line_coverage(
+    size: select.Size, start: tuple[int, int], end: tuple[int, int], diameter: int
+) -> np.ndarray:
+    """Pixels within diameter of the segment, on or off only; diameter 1 falls back to Bresenham."""
+    if diameter <= 1:
+        return shapes.line_coverage(size, start, end)
+    width, height = size
+    shift = 0.5 if diameter % 2 else 0.0
+    ax, ay = start[0] + shift, start[1] + shift
+    bx, by = end[0] + shift, end[1] + shift
+    radius = diameter / 2
+    x0 = max(int(math.floor(min(ax, bx) - radius)), 0)
+    y0 = max(int(math.floor(min(ay, by) - radius)), 0)
+    x1 = min(int(math.ceil(max(ax, bx) + radius)) + 1, width)
+    y1 = min(int(math.ceil(max(ay, by) + radius)) + 1, height)
+    mask = np.zeros((height, width), dtype=bool)
+    if x0 >= x1 or y0 >= y1:
+        return mask
+    yy, xx = np.mgrid[y0:y1, x0:x1]
+    px = xx + 0.5
+    py = yy + 0.5
+    dx, dy = bx - ax, by - ay
+    length_sq = dx * dx + dy * dy
+    t = np.clip(((px - ax) * dx + (py - ay) * dy) / length_sq, 0.0, 1.0) if length_sq else 0.0
+    nx = ax + t * dx
+    ny = ay + t * dy
+    mask[y0:y1, x0:x1] = (px - nx) ** 2 + (py - ny) ** 2 < radius * radius
+    return mask
+
+
 def _mouse_floor(
     region: bpy.types.Region, image: bpy.types.Image, event: bpy.types.Event
 ) -> tuple[int, int]:
@@ -50,7 +91,9 @@ def _line_mask(
 ) -> np.ndarray:
     scene = context.scene
     assert scene is not None
-    coverage = shapes.line_coverage((image.size[0], image.size[1]), start, end)
+    coverage = thick_line_coverage(
+        (image.size[0], image.size[1]), start, end, _line_size(context)
+    )
     coverage = mirror.expand(coverage, *mirror.enabled(scene))
     if select.session.image_name == image.name and select.session.mask is not None:
         coverage &= select.session.mask
