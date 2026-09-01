@@ -16,6 +16,7 @@ from . import (
     prefs,
     select,
     shapes,
+    stacking,
     transform,
     ui,
     undo,
@@ -40,6 +41,7 @@ _modules = (
     shapes,
     dither,
     palette,
+    stacking,
     ui,
 )
 

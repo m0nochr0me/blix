@@ -91,3 +91,15 @@ def dither_brush_size(scene: bpy.types.Scene) -> int:
 
 def dither_transparent(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_dither_transparent
+
+
+def stack_preview(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_stack_preview
+
+
+def stack_projection(scene: bpy.types.Scene) -> str:
+    return cast(Any, scene).blix_stack_projection
+
+
+def stack_angle(scene: bpy.types.Scene) -> float:
+    return cast(Any, scene).blix_stack_angle

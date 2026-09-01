@@ -207,6 +207,33 @@ class BLIX_PT_layers(bpy.types.Panel):
         layout.operator("blix.layers_update")
 
 
+class BLIX_PT_stacking(bpy.types.Panel):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Blix"
+    bl_label = "Sprite Stacking"
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        scene = context.scene
+        assert layout is not None
+        assert scene is not None
+        image = _space(context).image
+        if image is None:
+            return
+        canvas = image if len(props.layers(image)) else props.canvas_of(image)
+        if canvas is None:
+            return
+        col = layout.column()
+        col.prop(scene, "blix_stack_preview")
+        col.prop(scene, "blix_stack_projection", text="Projection")
+        col.prop(scene, "blix_stack_angle")
+        layer = layers.active_layer(canvas)
+        if layer is not None:
+            layout.prop(layer, "height")
+        layout.operator("blix.stack_export", icon="EXPORT")
+
+
 class BLIX_PT_dither(bpy.types.Panel):
     bl_space_type = "IMAGE_EDITOR"
     bl_region_type = "UI"
@@ -252,6 +279,7 @@ _classes = (
     BLIX_PT_mirror,
     BLIX_UL_layers,
     BLIX_PT_layers,
+    BLIX_PT_stacking,
     BLIX_PT_dither,
     BLIX_PT_palette,
 )

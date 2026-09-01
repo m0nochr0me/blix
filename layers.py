@@ -203,6 +203,10 @@ def _layer_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) ->
         overlay.tag_redraw(context)
 
 
+def _stack_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
+    overlay.tag_redraw(context)
+
+
 def _active_changed(self: bpy.types.Image, context: bpy.types.Context) -> None:
     if len(props.layers(self)):
         sync_canvas(self)
@@ -229,6 +233,9 @@ class BlixLayer(bpy.types.PropertyGroup):
     )
     visible: bpy.props.BoolProperty(name="Visible", default=True, update=_layer_changed)
     lock: bpy.props.BoolProperty(name="Lock", default=False)
+    height: bpy.props.IntProperty(
+        name="Height", default=1, min=1, soft_max=16, update=_stack_changed
+    )
 
 
 def active_layer(canvas: bpy.types.Image) -> Any:
@@ -323,6 +330,7 @@ def duplicate_layer(canvas: bpy.types.Image, index: int) -> None:
     layer.opacity = source.opacity
     layer.blend = source.blend
     layer.visible = source.visible
+    layer.height = source.height
     layer.image = _clone_image(canvas, layer.name, select.read_pixels(source.image))
     stack.move(len(stack) - 1, index)
     props.set_layers_index(canvas, index)
