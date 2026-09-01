@@ -297,6 +297,7 @@ def add_layer(canvas: bpy.types.Image, name: str) -> None:
 
 
 def remove_layer(canvas: bpy.types.Image, index: int) -> None:
+    sync_canvas(canvas)
     stack = props.layers(canvas)
     _composite_cache.pop(canvas.name, None)
     stack.remove(index)
