@@ -417,23 +417,18 @@ def _clear_cache(*_args: Any) -> None:
 @persistent
 def _refresh_cache(*_args: Any) -> None:
     """Undo restored canvas pixels; restore matching layer state, else re-baseline the cache."""
+    for name in list(_composite_cache):
+        if bpy.data.images.get(name) is None:
+            _composite_cache.pop(name)
     restored = False
-    for name in list(_composite_cache.keys() | _history.keys()):
-        image = bpy.data.images.get(name)
-        if image is None:
-            _composite_cache.pop(name, None)
-            _history.pop(name, None)
+    for image in bpy.data.images:
+        if len(props.layers(image)) == 0:
             continue
         pixels = select.read_pixels(image)
         if _apply_history(image, pixels):
             restored = True
             continue
-        if name not in _composite_cache:
-            continue
-        if pixels.shape == _composite_cache[name].shape:
-            _composite_cache[name] = pixels
-        else:
-            _composite_cache.pop(name)
+        _composite_cache[image.name] = pixels
     if restored:
         overlay.tag_redraw(bpy.context)
 
