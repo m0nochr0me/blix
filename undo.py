@@ -14,6 +14,8 @@ def record(context: bpy.types.Context, image: bpy.types.Image) -> None:
     from . import layers
 
     _pending.discard(image.name)
+    if len(layers.props.layers(image)):
+        layers.sync_canvas(image)
     layers.push_history(image)
     with context.temp_override(edit_image=image):
         cast(Any, bpy.ops.image).invert()
