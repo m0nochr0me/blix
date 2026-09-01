@@ -120,6 +120,36 @@ def _apply_history(canvas: bpy.types.Image, current: np.ndarray) -> bool:
     return False
 
 
+def _pack_layers(canvas: bpy.types.Image) -> None:
+    """Refresh packed payloads so memfile undo restores current layer pixels, not stale ones."""
+    for layer in props.layers(canvas):
+        if layer.image is not None and layer.image.is_dirty:
+            layer.image.pack()
+
+
+def _repair_stale_layers(canvas: bpy.types.Image) -> bool:
+    """Restore layers reloaded from stale packed files with the newest history snapshot."""
+    entries = _history.get(canvas.name)
+    if not entries:
+        return False
+    repaired = False
+    for layer in props.layers(canvas):
+        image = layer.image
+        if image is None or image.is_dirty:
+            continue
+        for _pixels, layer_map in reversed(entries):
+            saved = layer_map.get(image.name)
+            if saved is None:
+                continue
+            if tuple(image.size) == (saved.shape[1], saved.shape[0]) and not np.array_equal(
+                select.read_pixels(image), saved
+            ):
+                select.write_pixels(image, saved)
+                repaired = True
+            break
+    return repaired
+
+
 def _sync_target(canvas: bpy.types.Image) -> Any:
     stack = props.layers(canvas)
     index = _sync_targets.get(canvas.name, props.layers_index(canvas))
@@ -428,6 +458,8 @@ def _refresh_cache(*_args: Any) -> None:
         if _apply_history(image, pixels):
             restored = True
             continue
+        if _repair_stale_layers(image):
+            restored = True
         _composite_cache[image.name] = pixels
     if restored:
         overlay.tag_redraw(bpy.context)
@@ -453,6 +485,7 @@ def _undo_step(
     yield
     undo.record(context, canvas)
     if message is not None:
+        _pack_layers(canvas)
         cast(Any, bpy.ops.ed).undo_push(message=message)
 
 
@@ -483,6 +516,7 @@ class BLIX_OT_layers_init(bpy.types.Operator):
         image = select.edit_image(context)
         assert image is not None
         init_layers(image)
+        _pack_layers(image)
         cast(Any, bpy.ops.ed).undo_push(message="Blix Init Layers")
         return {"FINISHED"}
 
@@ -498,6 +532,7 @@ class BLIX_OT_layer_add(_CanvasOperator):
         canvas = resolve_canvas(context)
         assert canvas is not None
         add_layer(canvas, next_layer_name(canvas))
+        _pack_layers(canvas)
         cast(Any, bpy.ops.ed).undo_push(message="Blix Add Layer")
         return {"FINISHED"}
 
