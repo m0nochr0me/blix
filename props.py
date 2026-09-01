@@ -57,6 +57,10 @@ def select_mode(scene: bpy.types.Scene) -> str:
     return cast(Any, scene).blix_select_mode
 
 
+def select_brush_size(scene: bpy.types.Scene) -> int:
+    return int(cast(Any, scene).blix_select_brush_size)
+
+
 def mirror_h(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_mirror_h
 

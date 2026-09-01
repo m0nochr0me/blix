@@ -50,21 +50,6 @@ def line_coverage(size: select.Size, start: tuple[int, int], end: tuple[int, int
     return mask
 
 
-def polygon_coverage(size: select.Size, points: list[Point]) -> np.ndarray:
-    width, height = size
-    ys = (np.arange(height) + 0.5)[:, None]
-    xs = (np.arange(width) + 0.5)[None, :]
-    mask = np.zeros((height, width), dtype=bool)
-    for index, (x0, y0) in enumerate(points):
-        x1, y1 = points[(index + 1) % len(points)]
-        if y0 == y1:
-            continue
-        spans = (ys >= min(y0, y1)) & (ys < max(y0, y1))
-        crossing = x0 + (ys - y0) * (x1 - x0) / (y1 - y0)
-        mask ^= spans & (xs < crossing)
-    return mask
-
-
 def hexagon_points(rect: select.Rect, pointy: bool) -> list[Point]:
     x0, y0, x1, y1 = rect
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
@@ -89,7 +74,7 @@ def shape_coverage(
     elif kind == "ELLIPSE":
         solid = select.ellipse_mask(size, rect)
     else:
-        solid = polygon_coverage(size, hexagon_points(rect, pointy))
+        solid = select.polygon_mask(size, hexagon_points(rect, pointy))
     return solid if filled else border_of(solid)
 
 
@@ -248,7 +233,7 @@ def register() -> None:
         description="Hexagon with a vertex on top instead of a flat edge",
         default=True,
     )
-    bpy.utils.register_tool(BLIX_TOOL_shape, after="blix.select_ellipse")
+    bpy.utils.register_tool(BLIX_TOOL_shape, after="blix.select_brush")
     overlay.extra_draws.append(preview.draw)
 
 

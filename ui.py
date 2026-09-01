@@ -91,6 +91,7 @@ class BLIX_PT_select(bpy.types.Panel):
         assert layout is not None
         assert scene is not None
         layout.prop(scene, "blix_select_mode", expand=True)
+        layout.prop(scene, "blix_select_brush_size")
         row = layout.row(align=True)
         cast(Any, row.operator("blix.select_rotate90", text="90 CCW")).turns = 1
         cast(Any, row.operator("blix.select_rotate90", text="180")).turns = 2

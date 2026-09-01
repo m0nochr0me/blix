@@ -20,7 +20,14 @@ HANDLE_FILL = (1.0, 1.0, 1.0, 1.0)
 HANDLE_HALF = 3.0
 HANDLE_HIT = 6.0
 ROTATE_REACH = 18.0
+LASSO_STEP = 3.0
 _SELECT_TOOLS = {"blix.select_box", "blix.select_ellipse"}
+_MODE_ITEMS = (
+    ("DEFAULT", "Default", ""),
+    ("SET", "Set", ""),
+    ("ADD", "Add", ""),
+    ("SUB", "Subtract", ""),
+)
 
 Rect = tuple[int, int, int, int]
 Size = tuple[int, int]
@@ -184,6 +191,59 @@ def ellipse_mask(size: Size, rect: Rect) -> np.ndarray:
     return mask
 
 
+def polygon_mask(size: Size, points: list[tuple[float, float]]) -> np.ndarray:
+    """Even-odd coverage of a closed polygon, sampled at pixel centers."""
+    width, height = size
+    mask = np.zeros((height, width), dtype=bool)
+    if len(points) < 3:
+        return mask
+    xs_all = [x for x, _ in points]
+    ys_all = [y for _, y in points]
+    box = clip_rect(
+        size,
+        (
+            math.floor(min(xs_all)),
+            math.floor(min(ys_all)),
+            math.ceil(max(xs_all)),
+            math.ceil(max(ys_all)),
+        ),
+    )
+    if box is None:
+        return mask
+    bx0, by0, bx1, by1 = box
+    ys = (np.arange(by0, by1) + 0.5)[:, None]
+    xs = (np.arange(bx0, bx1) + 0.5)[None, :]
+    sub = np.zeros((by1 - by0, bx1 - bx0), dtype=bool)
+    for index, (x0, y0) in enumerate(points):
+        x1, y1 = points[(index + 1) % len(points)]
+        if y0 == y1:
+            continue
+        spans = (ys >= min(y0, y1)) & (ys < max(y0, y1))
+        crossing = x0 + (ys - y0) * (x1 - x0) / (y1 - y0)
+        sub ^= spans & (xs < crossing)
+    mask[by0:by1, bx0:bx1] = sub
+    return mask
+
+
+def stamp_disc(mask: np.ndarray, center: tuple[float, float], radius: float) -> None:
+    height, width = mask.shape
+    cx, cy = center
+    box = clip_rect(
+        (width, height),
+        (
+            math.floor(cx - radius),
+            math.floor(cy - radius),
+            math.ceil(cx + radius),
+            math.ceil(cy + radius),
+        ),
+    )
+    if box is None:
+        return
+    x0, y0, x1, y1 = box
+    yy, xx = np.mgrid[y0:y1, x0:x1]
+    mask[y0:y1, x0:x1] |= (xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 <= radius * radius
+
+
 def shape_mask(size: Size, rect: Rect, shape: str) -> np.ndarray:
     return ellipse_mask(size, rect) if shape == "ELLIPSE" else rect_mask(size, rect)
 
@@ -283,6 +343,22 @@ def mouse_pixel(
     region: bpy.types.Region, image: bpy.types.Image, event: bpy.types.Event
 ) -> tuple[float, float]:
     return overlay.region_to_image(region, image, event.mouse_region_x, event.mouse_region_y)
+
+
+def resolve_mode(context: bpy.types.Context, mode: str) -> str:
+    if mode != "DEFAULT":
+        return mode
+    scene = context.scene
+    return props.select_mode(scene) if scene is not None else "SET"
+
+
+def guide_grab(region: bpy.types.Region, image: bpy.types.Image, event: bpy.types.Event) -> bool:
+    from . import guides
+
+    return (
+        event.ctrl
+        and guides.find_near(region, image, event.mouse_region_x, event.mouse_region_y) >= 0
+    )
 
 
 def _get_preview_shader() -> gpu.types.GPUShader:
@@ -530,14 +606,7 @@ class BLIX_OT_select_marquee(bpy.types.Operator):
         options={"SKIP_SAVE", "HIDDEN"},
     )
     mode: bpy.props.EnumProperty(
-        items=(
-            ("DEFAULT", "Default", ""),
-            ("SET", "Set", ""),
-            ("ADD", "Add", ""),
-            ("SUB", "Subtract", ""),
-        ),
-        default="DEFAULT",
-        options={"SKIP_SAVE", "HIDDEN"},
+        items=_MODE_ITEMS, default="DEFAULT", options={"SKIP_SAVE", "HIDDEN"}
     )
 
     _anchor: tuple[int, int]
@@ -547,23 +616,17 @@ class BLIX_OT_select_marquee(bpy.types.Operator):
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
     ) -> set[OperatorReturnItems]:
-        from . import guides
-
         image = edit_image(context)
         if image is None or image.size[0] == 0 or image.size[1] == 0:
             return {"PASS_THROUGH"}
         region = context.region
         assert region is not None
-        near_guide = guides.find_near(region, image, event.mouse_region_x, event.mouse_region_y)
-        if event.ctrl and near_guide >= 0:
+        if guide_grab(region, image, event):
             return {"PASS_THROUGH"}
         x, y = mouse_pixel(region, image, event)
         px, py = math.floor(x), math.floor(y)
 
-        scene = context.scene
-        mode = self.mode
-        if mode == "DEFAULT":
-            mode = props.select_mode(scene) if scene is not None else "SET"
+        mode = resolve_mode(context, self.mode)
         current = session.mask if session.image_name == image.name else None
 
         if mode == "SET" and current is not None:
@@ -632,6 +695,175 @@ class BLIX_OT_select_marquee(bpy.types.Operator):
         """Drag rect on an unbounded canvas; clipping happens when rasterizing."""
         ax, ay = self._anchor
         return (min(ax, px), min(ay, py), max(ax, px) + 1, max(ay, py) + 1)
+
+
+def _poly_segments(points: list[tuple[float, float]]) -> np.ndarray:
+    closed = np.array(points + points[:1], dtype=np.float32)
+    return np.stack([closed[:-1], closed[1:]], axis=1)
+
+
+class BLIX_OT_select_lasso(bpy.types.Operator):
+    """Drag a freehand outline to select pixels; Shift adds, Ctrl subtracts"""
+
+    bl_idname = "blix.select_lasso"
+    bl_label = "Select Lasso"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    mode: bpy.props.EnumProperty(
+        items=_MODE_ITEMS, default="DEFAULT", options={"SKIP_SAVE", "HIDDEN"}
+    )
+
+    _points: list[tuple[float, float]]
+    _last_region: tuple[float, float]
+    _base: np.ndarray | None
+    _base_outline: np.ndarray
+    _mode: str
+
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set[OperatorReturnItems]:
+        image = edit_image(context)
+        if image is None or image.size[0] == 0 or image.size[1] == 0:
+            return {"PASS_THROUGH"}
+        region = context.region
+        assert region is not None
+        if guide_grab(region, image, event):
+            return {"PASS_THROUGH"}
+        mode = resolve_mode(context, self.mode)
+        current = session.mask if session.image_name == image.name else None
+        session.reset()
+        session.image_name = image.name
+        self._base = None if mode == "SET" else current
+        self._base_outline = (
+            mask_outline(self._base) if self._base is not None else np.empty((0, 2, 2), np.float32)
+        )
+        self._mode = mode
+        self._points = [mouse_pixel(region, image, event)]
+        self._last_region = (event.mouse_region_x, event.mouse_region_y)
+        window_manager = context.window_manager
+        assert window_manager is not None
+        window_manager.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
+        image = edit_image(context)
+        if image is None:
+            return {"CANCELLED"}
+        region = context.region
+        assert region is not None
+
+        if event.type == "MOUSEMOVE":
+            rx, ry = event.mouse_region_x, event.mouse_region_y
+            if math.hypot(rx - self._last_region[0], ry - self._last_region[1]) >= LASSO_STEP:
+                self._points.append(mouse_pixel(region, image, event))
+                self._last_region = (rx, ry)
+                session.drag_outline = np.concatenate(
+                    [self._base_outline, _poly_segments(self._points)]
+                )
+                overlay.tag_redraw(context)
+            return {"RUNNING_MODAL"}
+
+        if event.type == "LEFTMOUSE" and event.value == "RELEASE":
+            session.drag_outline = None
+            if len(self._points) >= 3:
+                size = (image.size[0], image.size[1])
+                shape = polygon_mask(size, self._points)
+                session.set_mask(combine_mask(self._base, shape, self._mode))
+            else:
+                session.set_mask(self._base)
+            overlay.tag_redraw(context)
+            return {"FINISHED"}
+
+        if event.type in {"ESC", "RIGHTMOUSE"}:
+            session.drag_outline = None
+            session.set_mask(self._base)
+            overlay.tag_redraw(context)
+            return {"CANCELLED"}
+
+        return {"RUNNING_MODAL"}
+
+
+class BLIX_OT_select_brush(bpy.types.Operator):
+    """Paint a selection with a round brush; Shift adds, Ctrl subtracts"""
+
+    bl_idname = "blix.select_brush"
+    bl_label = "Select Brush"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    mode: bpy.props.EnumProperty(
+        items=_MODE_ITEMS, default="DEFAULT", options={"SKIP_SAVE", "HIDDEN"}
+    )
+
+    _stroke: np.ndarray
+    _last: tuple[float, float]
+    _base: np.ndarray | None
+    _mode: str
+
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set[OperatorReturnItems]:
+        image = edit_image(context)
+        if image is None or image.size[0] == 0 or image.size[1] == 0:
+            return {"PASS_THROUGH"}
+        region = context.region
+        assert region is not None
+        if guide_grab(region, image, event):
+            return {"PASS_THROUGH"}
+        mode = resolve_mode(context, self.mode)
+        current = session.mask if session.image_name == image.name else None
+        session.reset()
+        session.image_name = image.name
+        self._base = None if mode == "SET" else current
+        self._mode = mode
+        self._stroke = np.zeros((image.size[1], image.size[0]), dtype=bool)
+        self._last = mouse_pixel(region, image, event)
+        self._stamp_to(context, self._last)
+        window_manager = context.window_manager
+        assert window_manager is not None
+        window_manager.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def _stamp_to(self, context: bpy.types.Context, point: tuple[float, float]) -> None:
+        scene = context.scene
+        assert scene is not None
+        radius = props.select_brush_size(scene) / 2
+        distance = math.hypot(point[0] - self._last[0], point[1] - self._last[1])
+        steps = max(int(distance / max(radius / 2, 0.5)), 1)
+        for step in range(1, steps + 1):
+            factor = step / steps
+            center = (
+                self._last[0] + (point[0] - self._last[0]) * factor,
+                self._last[1] + (point[1] - self._last[1]) * factor,
+            )
+            stamp_disc(self._stroke, center, radius)
+        self._last = point
+        session.drag_outline = mask_outline(combine_mask(self._base, self._stroke, self._mode))
+        overlay.tag_redraw(context)
+
+    def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
+        image = edit_image(context)
+        if image is None:
+            return {"CANCELLED"}
+        region = context.region
+        assert region is not None
+
+        if event.type == "MOUSEMOVE":
+            self._stamp_to(context, mouse_pixel(region, image, event))
+            return {"RUNNING_MODAL"}
+
+        if event.type == "LEFTMOUSE" and event.value == "RELEASE":
+            session.drag_outline = None
+            session.set_mask(combine_mask(self._base, self._stroke, self._mode))
+            overlay.tag_redraw(context)
+            return {"FINISHED"}
+
+        if event.type in {"ESC", "RIGHTMOUSE"}:
+            session.drag_outline = None
+            session.set_mask(self._base)
+            overlay.tag_redraw(context)
+            return {"CANCELLED"}
+
+        return {"RUNNING_MODAL"}
 
 
 class BLIX_OT_select_move(bpy.types.Operator):
@@ -759,6 +991,23 @@ class BLIX_OT_select_clear(bpy.types.Operator):
         return {"FINISHED"}
 
 
+_COMMON_KEYMAP = (
+    ("blix.select_move", {"type": "G", "value": "PRESS"}, None),
+    ("blix.select_rotate", {"type": "R", "value": "PRESS"}, None),
+    ("blix.select_scale", {"type": "S", "value": "PRESS"}, None),
+    (
+        "blix.select_move",
+        {"type": "D", "value": "PRESS", "shift": True},
+        {"properties": [("duplicate", True)]},
+    ),
+    ("blix.select_copy", {"type": "C", "value": "PRESS", "ctrl": True}, None),
+    ("blix.select_paste", {"type": "V", "value": "PRESS", "ctrl": True}, None),
+    ("blix.select_delete", {"type": "X", "value": "PRESS"}, None),
+    ("blix.select_delete", {"type": "DEL", "value": "PRESS"}, None),
+    ("blix.select_clear", {"type": "ESC", "value": "PRESS"}, None),
+)
+
+
 def _tool_keymap(shape: str) -> tuple[Any, ...]:
     marquee = "blix.select_marquee"
     return (
@@ -773,20 +1022,23 @@ def _tool_keymap(shape: str) -> tuple[Any, ...]:
             {"type": "LEFTMOUSE", "value": "PRESS", "ctrl": True},
             {"properties": [("shape", shape), ("mode", "SUB")]},
         ),
-        ("blix.select_move", {"type": "G", "value": "PRESS"}, None),
-        ("blix.select_rotate", {"type": "R", "value": "PRESS"}, None),
-        ("blix.select_scale", {"type": "S", "value": "PRESS"}, None),
+    ) + _COMMON_KEYMAP
+
+
+def _gesture_keymap(idname: str) -> tuple[Any, ...]:
+    return (
+        (idname, {"type": "LEFTMOUSE", "value": "PRESS"}, None),
         (
-            "blix.select_move",
-            {"type": "D", "value": "PRESS", "shift": True},
-            {"properties": [("duplicate", True)]},
+            idname,
+            {"type": "LEFTMOUSE", "value": "PRESS", "shift": True},
+            {"properties": [("mode", "ADD")]},
         ),
-        ("blix.select_copy", {"type": "C", "value": "PRESS", "ctrl": True}, None),
-        ("blix.select_paste", {"type": "V", "value": "PRESS", "ctrl": True}, None),
-        ("blix.select_delete", {"type": "X", "value": "PRESS"}, None),
-        ("blix.select_delete", {"type": "DEL", "value": "PRESS"}, None),
-        ("blix.select_clear", {"type": "ESC", "value": "PRESS"}, None),
-    )
+        (
+            idname,
+            {"type": "LEFTMOUSE", "value": "PRESS", "ctrl": True},
+            {"properties": [("mode", "SUB")]},
+        ),
+    ) + _COMMON_KEYMAP
 
 
 class BLIX_TOOL_select(bpy.types.WorkSpaceTool):
@@ -811,7 +1063,35 @@ class BLIX_TOOL_select_ellipse(bpy.types.WorkSpaceTool):
     bl_keymap = _tool_keymap("ELLIPSE")
 
 
-_classes = (BLIX_OT_select_marquee, BLIX_OT_select_move, BLIX_OT_select_clear)
+class BLIX_TOOL_select_lasso(bpy.types.WorkSpaceTool):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_context_mode = "PAINT"
+    bl_idname = "blix.select_lasso"
+    bl_label = "Blix Select Lasso"
+    bl_description = "Select freehand pixel regions"
+    bl_icon = "ops.generic.select_lasso"
+    bl_widget = None
+    bl_keymap = _gesture_keymap("blix.select_lasso")
+
+
+class BLIX_TOOL_select_brush(bpy.types.WorkSpaceTool):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_context_mode = "PAINT"
+    bl_idname = "blix.select_brush"
+    bl_label = "Blix Select Brush"
+    bl_description = "Paint a selection with a round brush"
+    bl_icon = "ops.generic.select_paint"
+    bl_widget = None
+    bl_keymap = _gesture_keymap("blix.select_brush")
+
+
+_classes = (
+    BLIX_OT_select_marquee,
+    BLIX_OT_select_lasso,
+    BLIX_OT_select_brush,
+    BLIX_OT_select_move,
+    BLIX_OT_select_clear,
+)
 
 
 def register() -> None:
@@ -828,15 +1108,27 @@ def register() -> None:
         ),
         default="SET",
     )
+    scene_cls.blix_select_brush_size = bpy.props.IntProperty(
+        name="Brush Size",
+        description="Selection brush diameter in pixels",
+        default=8,
+        min=1,
+        max=256,
+    )
     bpy.utils.register_tool(BLIX_TOOL_select, separator=True)
     bpy.utils.register_tool(BLIX_TOOL_select_ellipse, after="blix.select_box")
+    bpy.utils.register_tool(BLIX_TOOL_select_lasso, after="blix.select_ellipse")
+    bpy.utils.register_tool(BLIX_TOOL_select_brush, after="blix.select_lasso")
     overlay.extra_draws.append(_draw_selection)
 
 
 def unregister() -> None:
     overlay.extra_draws.remove(_draw_selection)
+    bpy.utils.unregister_tool(BLIX_TOOL_select_brush)
+    bpy.utils.unregister_tool(BLIX_TOOL_select_lasso)
     bpy.utils.unregister_tool(BLIX_TOOL_select_ellipse)
     bpy.utils.unregister_tool(BLIX_TOOL_select)
+    del cast(Any, bpy.types.Scene).blix_select_brush_size
     del cast(Any, bpy.types.Scene).blix_select_mode
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)

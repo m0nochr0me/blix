@@ -309,7 +309,7 @@ def register() -> None:
     scene_cls.blix_dither_brush_size = bpy.props.IntProperty(
         name="Brush Size", default=8, min=1, max=256
     )
-    bpy.utils.register_tool(BLIX_TOOL_dither_gradient, after="blix.select_ellipse")
+    bpy.utils.register_tool(BLIX_TOOL_dither_gradient, after="blix.select_brush")
     bpy.utils.register_tool(BLIX_TOOL_dither_brush, after="blix.dither_gradient_tool")
     overlay.extra_draws.append(preview.draw)
 
