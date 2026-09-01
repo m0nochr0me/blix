@@ -274,12 +274,23 @@ def remove_layer(canvas: bpy.types.Image, index: int) -> None:
     composite(canvas)
 
 
+def copy_layer_name(canvas: bpy.types.Image, source: str) -> str:
+    names = {layer.name for layer in props.layers(canvas)}
+    name = f"{source} Copy"
+    counter = 2
+    while name in names:
+        name = f"{source} Copy {counter}"
+        counter += 1
+    return name
+
+
 def duplicate_layer(canvas: bpy.types.Image, index: int) -> None:
     sync_canvas(canvas)
     stack = props.layers(canvas)
     source = stack[index]
+    name = copy_layer_name(canvas, source.name)
     layer = stack.add()
-    layer.name = f"{source.name} Copy"
+    layer.name = name
     layer.opacity = source.opacity
     layer.blend = source.blend
     layer.visible = source.visible
