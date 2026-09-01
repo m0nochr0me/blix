@@ -1,5 +1,6 @@
 """Layer stack on a canvas Image with numpy compositing. Index 0 is the top layer."""
 
+import re
 from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -245,6 +246,15 @@ def init_layers(canvas: bpy.types.Image) -> None:
     push_history(canvas)
 
 
+def next_layer_name(canvas: bpy.types.Image) -> str:
+    numbers = [
+        int(match.group(1))
+        for layer in props.layers(canvas)
+        if (match := re.fullmatch(r"Layer (\d+)", layer.name))
+    ]
+    return f"Layer {max(numbers, default=0) + 1}"
+
+
 def add_layer(canvas: bpy.types.Image, name: str) -> None:
     sync_canvas(canvas)
     stack = props.layers(canvas)
@@ -479,7 +489,7 @@ class BLIX_OT_layer_add(_CanvasOperator):
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         canvas = resolve_canvas(context)
         assert canvas is not None
-        add_layer(canvas, f"Layer {len(props.layers(canvas))}")
+        add_layer(canvas, next_layer_name(canvas))
         cast(Any, bpy.ops.ed).undo_push(message="Blix Add Layer")
         return {"FINISHED"}
 
