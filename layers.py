@@ -391,6 +391,18 @@ def _stroke_tick() -> float | None:
     return None
 
 
+def watch_stroke(image: bpy.types.Image) -> None:
+    """Arm end-of-stroke layer attribution for a native paint stroke on a layered canvas."""
+    global _stroke_canvas
+    if len(props.layers(image)) == 0:
+        return
+    if image.name not in _composite_cache:
+        _composite_cache[image.name] = select.read_pixels(image)
+    _stroke_canvas = image.name
+    if not bpy.app.timers.is_registered(_stroke_tick):
+        bpy.app.timers.register(_stroke_tick, first_interval=POLL)
+
+
 class BLIX_OT_stroke_sync(bpy.types.Operator):
     """Apply the native stroke to the active layer and recomposite when it ends"""
 
@@ -406,14 +418,9 @@ class BLIX_OT_stroke_sync(bpy.types.Operator):
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
     ) -> set[OperatorReturnItems]:
-        global _stroke_canvas
         image = select.edit_image(context)
         assert image is not None
-        if image.name not in _composite_cache:
-            _composite_cache[image.name] = select.read_pixels(image)
-        _stroke_canvas = image.name
-        if not bpy.app.timers.is_registered(_stroke_tick):
-            bpy.app.timers.register(_stroke_tick, first_interval=POLL)
+        watch_stroke(image)
         return {"PASS_THROUGH"}
 
 

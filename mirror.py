@@ -1,4 +1,4 @@
-"""Mirror symmetry for Blix drawing tools: reflect writes across the image center axes."""
+"""Mirror symmetry and native-stroke selection clamp for Blix drawing tools."""
 
 from typing import TYPE_CHECKING, Any, cast
 
@@ -46,7 +46,12 @@ def _flip(array: np.ndarray, horizontal: bool, vertical: bool) -> np.ndarray:
 
 
 def apply(
-    painted: np.ndarray, base: np.ndarray, mine: np.ndarray, horizontal: bool, vertical: bool
+    painted: np.ndarray,
+    base: np.ndarray,
+    mine: np.ndarray,
+    horizontal: bool,
+    vertical: bool,
+    mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, bool]:
     """Copy pixels changed since base onto their mirrored positions; mine tracks own writes."""
     changed = np.any(painted != base, axis=2) & ~mine
@@ -57,6 +62,8 @@ def apply(
     touched = False
     for horizontal_flip, vertical_flip in flips(horizontal, vertical):
         target = _flip(changed, horizontal_flip, vertical_flip) & ~changed
+        if mask is not None:
+            target &= mask
         if not target.any():
             continue
         source = _flip(painted, horizontal_flip, vertical_flip)
@@ -67,11 +74,18 @@ def apply(
 
 
 class _Watch:
-    def __init__(self, image_name: str, base: np.ndarray, axes: tuple[bool, bool]) -> None:
+    def __init__(
+        self,
+        image_name: str,
+        base: np.ndarray,
+        axes: tuple[bool, bool],
+        mask: np.ndarray | None,
+    ) -> None:
         self.image_name = image_name
         self.base = base
         self.mine = np.zeros(base.shape[:2], dtype=bool)
         self.axes = axes
+        self.mask = mask
         self.dirty = False
 
 
@@ -107,10 +121,19 @@ def _tick() -> float | None:
     if pixels.shape != watch.base.shape:
         _watch = None
         return None
-    painted, watch.mine, touched = apply(pixels, watch.base, watch.mine, *watch.axes)
+    clamped = False
+    if watch.mask is not None:
+        outside = np.any(pixels != watch.base, axis=2) & ~watch.mine & ~watch.mask
+        if outside.any():
+            pixels[outside] = watch.base[outside]
+            clamped = True
+    painted, watch.mine, touched = apply(pixels, watch.base, watch.mine, *watch.axes, watch.mask)
     if touched:
         select.write_pixels(image, painted)
         watch.dirty = True
+        overlay.tag_redraw(bpy.context)
+    elif clamped:
+        select.write_pixels(image, pixels)
         overlay.tag_redraw(bpy.context)
     if painting():
         return POLL
@@ -132,35 +155,51 @@ def _bracket(
     undo.record(context, image)
 
 
+def watch_stroke(context: bpy.types.Context) -> None:
+    """Arm the stroke watch when mirror axes or a selection make it needed."""
+    global _watch
+    image = select.edit_image(context)
+    scene = context.scene
+    if image is None or scene is None or image.size[0] == 0 or image.size[1] == 0:
+        return
+    axes = enabled(scene)
+    mask = select.session.mask if select.session.image_name == image.name else None
+    if not any(axes) and mask is None:
+        return
+    if bpy.app.timers.is_registered(_tick):
+        bpy.app.timers.unregister(_tick)
+    if _watch is not None:
+        _tick()
+    base = select.read_pixels(image)
+    if mask is not None and mask.shape != base.shape[:2]:
+        mask = None
+    _watch = _Watch(image.name, base, axes, mask)
+    bpy.app.timers.register(_tick, first_interval=POLL)
+
+
 class BLIX_OT_mirror_paint(bpy.types.Operator):
-    """Mirror the native brush stroke that follows across the enabled axes"""
+    """Clamp the native brush stroke that follows to the selection and mirror it across axes"""
 
     bl_idname = "blix.mirror_paint"
-    bl_label = "Mirror Paint Stroke"
+    bl_label = "Watch Paint Stroke"
     bl_options = {"INTERNAL"}
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
         scene = context.scene
-        if scene is None or not any(enabled(scene)):
+        if scene is None:
             return False
         image = select.edit_image(context)
-        return image is not None and image.size[0] > 0 and image.size[1] > 0
+        if image is None or image.size[0] == 0 or image.size[1] == 0:
+            return False
+        if any(enabled(scene)):
+            return True
+        return select.session.mask is not None and select.session.image_name == image.name
 
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
     ) -> set[OperatorReturnItems]:
-        global _watch
-        image = select.edit_image(context)
-        scene = context.scene
-        assert image is not None
-        assert scene is not None
-        if bpy.app.timers.is_registered(_tick):
-            bpy.app.timers.unregister(_tick)
-        if _watch is not None:
-            _tick()
-        _watch = _Watch(image.name, select.read_pixels(image), enabled(scene))
-        bpy.app.timers.register(_tick, first_interval=POLL)
+        watch_stroke(context)
         return {"PASS_THROUGH"}
 
 

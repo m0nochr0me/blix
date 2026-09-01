@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 import bpy
 import numpy as np
 
-from . import mirror, overlay, paint, prefs, select, shapes, undo
+from . import layers, mirror, overlay, paint, prefs, select, shapes, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
@@ -141,6 +141,8 @@ class BLIX_OT_line_anchor(bpy.types.Operator):
             return {"PASS_THROUGH"}
         self._image = image.name
         self._record(context, event)
+        mirror.watch_stroke(context)
+        layers.watch_stroke(image)
         result = cast(Any, bpy.ops.paint).image_paint("INVOKE_DEFAULT", mode="NORMAL")
         if "RUNNING_MODAL" not in result:
             return {"FINISHED"}

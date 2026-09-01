@@ -14,7 +14,9 @@ if TYPE_CHECKING:
 Point = tuple[float, float]
 
 
-def erase_stamp(pixels: np.ndarray, center: Point, radius: float) -> None:
+def erase_stamp(
+    pixels: np.ndarray, center: Point, radius: float, clip_mask: np.ndarray | None = None
+) -> None:
     cx, cy = center
     height, width = pixels.shape[:2]
     x0 = max(int(math.floor(cx - radius)), 0)
@@ -25,6 +27,8 @@ def erase_stamp(pixels: np.ndarray, center: Point, radius: float) -> None:
         return
     yy, xx = np.mgrid[y0:y1, x0:x1]
     inside = (xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 <= radius * radius
+    if clip_mask is not None:
+        inside &= clip_mask[y0:y1, x0:x1]
     pixels[y0:y1, x0:x1][inside, 3] = 0.0
 
 
@@ -59,6 +63,7 @@ class BLIX_OT_ctrl_erase(bpy.types.Operator):
     _canvas: bpy.types.Image | None
     _target: bpy.types.Image
     _snapshot: np.ndarray
+    _mask: np.ndarray | None
     _last: Point
     _radius: float
 
@@ -90,6 +95,10 @@ class BLIX_OT_ctrl_erase(bpy.types.Operator):
             target = layer.image
         self._target = target
         self._snapshot = select.read_pixels(target)
+        mask = select.session.mask if select.session.image_name == image.name else None
+        if mask is not None and mask.shape != self._snapshot.shape[:2]:
+            mask = None
+        self._mask = mask
         self._radius = _image_radius(region, image, _brush_radius(context))
         self._last = select.mouse_pixel(region, image, event)
         undo.record(context, image)
@@ -113,7 +122,7 @@ class BLIX_OT_ctrl_erase(bpy.types.Operator):
                 self._last[1] + (point[1] - self._last[1]) * factor,
             )
             for stamp in mirror.centers(center, size, *axes):
-                erase_stamp(pixels, stamp, self._radius)
+                erase_stamp(pixels, stamp, self._radius, self._mask)
         select.write_pixels(self._target, pixels)
         self._last = point
         if self._canvas is not None:
