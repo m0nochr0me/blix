@@ -96,11 +96,13 @@ _Mirror H_ reflects left to right across the vertical center axis, _Mirror V_ to
 on gives four quadrant copies. Enabled axes are drawn over the image. Reflection is exact for odd
 and even canvas sizes — the center row or column maps onto itself.
 
-Blender's native brush is mirrored too — paint, erase, Ctrl invert, Shift smooth, any brush type.
-Blender exposes no stroke hook, so Blix snapshots the image on mouse press and reflects the pixels
-the stroke writes while it runs, which lands the mirrored half a frame behind the cursor. The same
-watch clamps native strokes to an active selection by restoring the pixels outside it. The dither
-brush and Ctrl erase mirror their stamps directly.
+Blender's native brush is mirrored too — paint, erase, Ctrl invert, Shift smooth, any dab-based
+brush type. Blender exposes no stroke hook, so Blix snapshots the image on mouse press and reflects
+the pixels the stroke writes while it runs, which lands the mirrored half a frame behind the cursor.
+The same watch clamps native strokes to an active selection by restoring the pixels outside it. The
+bucket fill is not reflected — flooding one region and mirroring its pixels leaks fill across the
+axis near the image edges; a selection still clamps the fill. The dither brush and Ctrl erase mirror
+their stamps directly.
 
 ### Brush Helpers
 

@@ -18,6 +18,14 @@ def enabled(scene: bpy.types.Scene) -> tuple[bool, bool]:
     return props.mirror_h(scene), props.mirror_v(scene)
 
 
+def fill_brush(context: bpy.types.Context) -> bool:
+    """Active image-paint brush is the bucket fill; its flood must not be mirrored."""
+    tool_settings = context.tool_settings
+    paint = tool_settings.image_paint if tool_settings is not None else None
+    brush = paint.brush if paint is not None else None
+    return brush is not None and brush.image_brush_type == "FILL"
+
+
 def expand(coverage: np.ndarray, horizontal: bool, vertical: bool) -> np.ndarray:
     """Coverage ORed with its mirrored copies; both axes give four quadrant copies."""
     out = coverage
@@ -162,7 +170,7 @@ def watch_stroke(context: bpy.types.Context) -> None:
     scene = context.scene
     if image is None or scene is None or image.size[0] == 0 or image.size[1] == 0:
         return
-    axes = enabled(scene)
+    axes = (False, False) if fill_brush(context) else enabled(scene)
     mask = select.session.mask if select.session.image_name == image.name else None
     if not any(axes) and mask is None:
         return
