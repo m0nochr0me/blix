@@ -113,6 +113,10 @@ def stack_pixelate(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_stack_pixelate
 
 
+def stack_resolution(scene: bpy.types.Scene) -> float:
+    return cast(Any, scene).blix_stack_resolution
+
+
 def stack_projection(scene: bpy.types.Scene) -> str:
     return cast(Any, scene).blix_stack_projection
 

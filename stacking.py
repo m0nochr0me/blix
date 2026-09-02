@@ -100,18 +100,19 @@ def _target_for(width: int, height: int) -> Target:
     return _target
 
 
-def _draw_pixelated(slices: list[Slice], affine: select.Affine) -> None:
-    """Rasterize slices at one texel per canvas pixel, then blit with nearest sampling."""
+def _draw_pixelated(slices: list[Slice], affine: select.Affine, resolution: float) -> None:
+    """Rasterize slices at `resolution` texels per canvas pixel, then blit with nearest sampling."""
+    cell = 1 / resolution
     xs = [x for _, corners in slices for x, _ in corners]
     ys = [y for _, corners in slices for _, y in corners]
-    x0, y0 = math.floor(min(xs)), math.floor(min(ys))
-    x1, y1 = math.ceil(max(xs)), math.ceil(max(ys))
-    width, height = x1 - x0, y1 - y0
+    x0, y0 = math.floor(min(xs) / cell) * cell, math.floor(min(ys) / cell) * cell
+    width, height = math.ceil((max(xs) - x0) / cell), math.ceil((max(ys) - y0) / cell)
+    x1, y1 = x0 + width * cell, y0 + height * cell
     texture, framebuffer = _target_for(width, height)
     projection = Matrix(
         (
-            (2 / width, 0, 0, -1 - 2 * x0 / width),
-            (0, 2 / height, 0, -1 - 2 * y0 / height),
+            (2 / (x1 - x0), 0, 0, -1 - 2 * x0 / (x1 - x0)),
+            (0, 2 / (y1 - y0), 0, -1 - 2 * y0 / (y1 - y0)),
             (0, 0, -1, 0),
             (0, 0, 0, 1),
         )
@@ -148,7 +149,7 @@ def _draw_stack(region: bpy.types.Region, image: bpy.types.Image) -> None:
         return
     slices = _slices(canvas, included, scene)
     if props.stack_pixelate(scene):
-        _draw_pixelated(slices, affine)
+        _draw_pixelated(slices, affine, props.stack_resolution(scene))
         return
     for texture, corners in slices:
         select.draw_texture_quad(_to_region(affine, corners), texture, False)
@@ -242,6 +243,16 @@ def register() -> None:
         default=False,
         update=_redraw,
     )
+    scene_cls.blix_stack_resolution = bpy.props.FloatProperty(
+        name="Resolution",
+        description="Texels per canvas pixel in the pixelated preview, 1 matches the canvas",
+        default=1.0,
+        min=0.1,
+        max=4.0,
+        step=10,
+        precision=2,
+        update=_redraw,
+    )
     scene_cls.blix_stack_projection = bpy.props.EnumProperty(
         name="Projection", items=PROJECTION_ITEMS, default="DIMETRIC", update=_redraw
     )
@@ -263,6 +274,7 @@ def unregister() -> None:
     scene_cls = cast(Any, bpy.types.Scene)
     del scene_cls.blix_stack_angle
     del scene_cls.blix_stack_projection
+    del scene_cls.blix_stack_resolution
     del scene_cls.blix_stack_pixelate
     del scene_cls.blix_stack_preview
     for cls in reversed(_classes):
