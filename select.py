@@ -399,16 +399,20 @@ def _get_preview_shader() -> gpu.types.GPUShader:
     info.vertex_out(iface)
     info.sampler(0, "FLOAT_2D", "image")
     info.push_constant("MAT4", "ModelViewProjectionMatrix")
+    info.push_constant("BOOL", "srgb")
     info.fragment_out(0, "VEC4", "fragColor")
     info.vertex_source(
         "void main()"
         "{gl_Position = ModelViewProjectionMatrix * vec4(pos, 0.0, 1.0); uv_interp = uv;}"
     )
     info.fragment_source(
+        "vec3 srgb_to_linear(vec3 c)"
+        "{return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));}"
         "void main()"
         "{ivec2 size = textureSize(image, 0);"
         "ivec2 texel = ivec2(clamp(uv_interp, 0.0, 0.99999) * vec2(size));"
-        "fragColor = texelFetch(image, texel, 0);}"
+        "vec4 color = texelFetch(image, texel, 0);"
+        "fragColor = srgb ? vec4(srgb_to_linear(color.rgb), color.a) : color;}"
     )
     _preview_shader = gpu.shader.create_from_info(info)
     return _preview_shader
@@ -443,7 +447,7 @@ class Preview:
         if self.texture is None or self.rect is None or self.image_name != image.name:
             return
         corners = [overlay.image_to_region(region, image, x, y) for x, y in rect_quad(self.rect)]
-        draw_texture_quad(corners, self.texture)
+        draw_texture_quad(corners, self.texture, not image.is_float)
 
 
 def _to_region(region: bpy.types.Region, image: bpy.types.Image, quad: Quad) -> Quad:
@@ -562,12 +566,14 @@ def _select_tool_active(context: bpy.types.Context) -> bool:
     return tool is not None and tool.idname in _SELECT_TOOLS
 
 
-def draw_texture_quad(corners: Quad, texture: gpu.types.GPUTexture) -> None:
+def draw_texture_quad(corners: Quad, texture: gpu.types.GPUTexture, srgb: bool) -> None:
+    """Draw texture on quad; srgb decodes texels stored as sRGB bytes for the linear framebuffer."""
     quad = [corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]]
     uvs = [(0, 0), (1, 0), (1, 1), (0, 0), (1, 1), (0, 1)]
     shader = _get_preview_shader()
     batch = batch_for_shader(shader, "TRIS", {"pos": quad, "uv": uvs})
     shader.uniform_sampler("image", texture)
+    shader.uniform_bool("srgb", [srgb])
     matrix = gpu.matrix.get_projection_matrix() @ gpu.matrix.get_model_view_matrix()
     shader.uniform_float("ModelViewProjectionMatrix", cast(Any, matrix))
     batch.draw(shader)
@@ -599,7 +605,7 @@ def _draw_selection(region: bpy.types.Region, image: bpy.types.Image) -> None:
                 if session.tex_quad is not None
                 else corners
             )
-            draw_texture_quad(tex_corners, session.texture)
+            draw_texture_quad(tex_corners, session.texture, not image.is_float)
         _draw_ants(_float_ants(affine, corners))
         _draw_handles(_quad_handles(corners))
         return

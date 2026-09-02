@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import bpy
+import gpu
 import numpy as np
 from bpy_extras.io_utils import ExportHelper
 
@@ -86,10 +87,12 @@ def _draw_stack(region: bpy.types.Region, image: bpy.types.Image) -> None:
     sx, tx, sy, ty = affine
     z = 0
     for layer in included:
-        texture = select.make_texture(select.read_pixels(layer.image))
+        texture = gpu.texture.from_image(layer.image)
         for _ in range(layer.height):
             corners = _slice_corners((width, height), theta, sin_e, cos_e, float(z), anchor)
-            select.draw_texture_quad([(x * sx + tx, y * sy + ty) for x, y in corners], texture)
+            select.draw_texture_quad(
+                [(x * sx + tx, y * sy + ty) for x, y in corners], texture, False
+            )
             z += 1
 
 
