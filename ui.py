@@ -235,6 +235,7 @@ class BLIX_PT_stacking(bpy.types.Panel):
             return
         col = layout.column()
         col.prop(scene, "blix_stack_preview")
+        col.prop(scene, "blix_stack_pixelate")
         col.prop(scene, "blix_stack_projection", text="Projection")
         col.prop(scene, "blix_stack_angle")
         layer = layers.active_layer(canvas)

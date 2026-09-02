@@ -109,6 +109,10 @@ def stack_preview(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_stack_preview
 
 
+def stack_pixelate(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_stack_pixelate
+
+
 def stack_projection(scene: bpy.types.Scene) -> str:
     return cast(Any, scene).blix_stack_projection
 

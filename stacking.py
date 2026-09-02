@@ -8,6 +8,7 @@ import bpy
 import gpu
 import numpy as np
 from bpy_extras.io_utils import ExportHelper
+from mathutils import Matrix
 
 from . import layers, overlay, props, select
 
@@ -24,6 +25,9 @@ _PROJECTIONS: dict[str, tuple[float, float]] = {
     "DIMETRIC": (30.0, 0.0),
     "TRIMETRIC": (20.0, 30.0),
 }
+Slice = tuple[gpu.types.GPUTexture, select.Quad]
+Target = tuple[gpu.types.GPUTexture, gpu.types.GPUFrameBuffer]
+_target: Target | None = None
 
 
 def _redraw(_self: Any, context: bpy.types.Context) -> None:
@@ -63,6 +67,72 @@ def _slice_corners(
     return corners
 
 
+def _slices(canvas: bpy.types.Image, included: list[Any], scene: bpy.types.Scene) -> list[Slice]:
+    width, height = canvas.size
+    elevation, yaw = _PROJECTIONS[props.stack_projection(scene)]
+    theta = math.radians(props.stack_angle(scene) + yaw)
+    sin_e = math.sin(math.radians(elevation))
+    cos_e = math.cos(math.radians(elevation))
+    total = sum(layer.height for layer in included)
+    radius = math.hypot(width, height) / 2
+    anchor = (1.25 * width + radius, height / 2 - (total - 1) * cos_e / 2)
+    slices: list[Slice] = []
+    z = 0
+    for layer in included:
+        texture = gpu.texture.from_image(layer.image)
+        for _ in range(layer.height):
+            corners = _slice_corners((width, height), theta, sin_e, cos_e, float(z), anchor)
+            slices.append((texture, corners))
+            z += 1
+    return slices
+
+
+def _to_region(affine: select.Affine, corners: select.Quad) -> select.Quad:
+    sx, tx, sy, ty = affine
+    return [(x * sx + tx, y * sy + ty) for x, y in corners]
+
+
+def _target_for(width: int, height: int) -> Target:
+    global _target
+    if _target is None or (_target[0].width, _target[0].height) != (width, height):
+        texture = gpu.types.GPUTexture((width, height), format="RGBA16F")
+        _target = (texture, gpu.types.GPUFrameBuffer(color_slots=texture))
+    return _target
+
+
+def _draw_pixelated(slices: list[Slice], affine: select.Affine) -> None:
+    """Rasterize slices at one texel per canvas pixel, then blit with nearest sampling."""
+    xs = [x for _, corners in slices for x, _ in corners]
+    ys = [y for _, corners in slices for _, y in corners]
+    x0, y0 = math.floor(min(xs)), math.floor(min(ys))
+    x1, y1 = math.ceil(max(xs)), math.ceil(max(ys))
+    width, height = x1 - x0, y1 - y0
+    texture, framebuffer = _target_for(width, height)
+    projection = Matrix(
+        (
+            (2 / width, 0, 0, -1 - 2 * x0 / width),
+            (0, 2 / height, 0, -1 - 2 * y0 / height),
+            (0, 0, -1, 0),
+            (0, 0, 0, 1),
+        )
+    )
+    depth_test = gpu.state.depth_test_get()
+    gpu.state.depth_test_set("NONE")
+    matrix_stack = cast(Any, gpu.matrix)
+    with cast(Any, framebuffer.bind()):
+        framebuffer.clear(color=(0.0, 0.0, 0.0, 0.0))
+        with matrix_stack.push_pop(), matrix_stack.push_pop_projection():
+            gpu.matrix.load_identity()
+            gpu.matrix.load_projection_matrix(projection)
+            for slice_texture, corners in slices:
+                select.draw_texture_quad(corners, slice_texture, False)
+    gpu.state.depth_test_set(cast(Any, depth_test))
+    quad = _to_region(affine, [(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+    gpu.state.blend_set("ALPHA_PREMULT")
+    select.draw_texture_quad(quad, texture, False)
+    gpu.state.blend_set("ALPHA")
+
+
 def _draw_stack(region: bpy.types.Region, image: bpy.types.Image) -> None:
     scene = bpy.context.scene
     if scene is None or not props.stack_preview(scene):
@@ -76,24 +146,12 @@ def _draw_stack(region: bpy.types.Region, image: bpy.types.Image) -> None:
     affine = select._image_affine(region, image)
     if affine is None:
         return
-    width, height = canvas.size
-    elevation, yaw = _PROJECTIONS[props.stack_projection(scene)]
-    theta = math.radians(props.stack_angle(scene) + yaw)
-    sin_e = math.sin(math.radians(elevation))
-    cos_e = math.cos(math.radians(elevation))
-    total = sum(layer.height for layer in included)
-    radius = math.hypot(width, height) / 2
-    anchor = (1.25 * width + radius, height / 2 - (total - 1) * cos_e / 2)
-    sx, tx, sy, ty = affine
-    z = 0
-    for layer in included:
-        texture = gpu.texture.from_image(layer.image)
-        for _ in range(layer.height):
-            corners = _slice_corners((width, height), theta, sin_e, cos_e, float(z), anchor)
-            select.draw_texture_quad(
-                [(x * sx + tx, y * sy + ty) for x, y in corners], texture, False
-            )
-            z += 1
+    slices = _slices(canvas, included, scene)
+    if props.stack_pixelate(scene):
+        _draw_pixelated(slices, affine)
+        return
+    for texture, corners in slices:
+        select.draw_texture_quad(_to_region(affine, corners), texture, False)
 
 
 def build_strip(canvas: bpy.types.Image) -> np.ndarray | None:
@@ -178,6 +236,12 @@ def register() -> None:
         default=False,
         update=_redraw,
     )
+    scene_cls.blix_stack_pixelate = bpy.props.BoolProperty(
+        name="Pixelate",
+        description="Rasterize the stack preview at canvas pixel resolution",
+        default=False,
+        update=_redraw,
+    )
     scene_cls.blix_stack_projection = bpy.props.EnumProperty(
         name="Projection", items=PROJECTION_ITEMS, default="DIMETRIC", update=_redraw
     )
@@ -193,10 +257,13 @@ def register() -> None:
 
 
 def unregister() -> None:
+    global _target
     overlay.extra_draws.remove(_draw_stack)
+    _target = None
     scene_cls = cast(Any, bpy.types.Scene)
     del scene_cls.blix_stack_angle
     del scene_cls.blix_stack_projection
+    del scene_cls.blix_stack_pixelate
     del scene_cls.blix_stack_preview
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)
