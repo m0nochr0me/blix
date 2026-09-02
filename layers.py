@@ -10,7 +10,7 @@ import bpy
 import numpy as np
 from bpy.app.handlers import persistent
 
-from . import overlay, props, select, undo
+from . import overlay, paint, props, select, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
@@ -167,6 +167,8 @@ def sync_canvas(canvas: bpy.types.Image) -> None:
         _composite_cache[canvas.name] = current
         return
     mask = np.any(current != cached, axis=2)
+    if _stand_in is not None and _stand_in.mask is not None and _stand_in.mask.shape == mask.shape:
+        mask |= _stand_in.mask
     if not mask.any():
         return
     if target is None or target.image is None or target.lock:
@@ -371,10 +373,11 @@ def flatten(canvas: bpy.types.Image) -> None:
 
 POLL = 0.05
 _stroke_canvas: str | None = None
+_stand_in: paint.StandIn | None = None
 
 
 def _stroke_tick() -> float | None:
-    global _stroke_canvas
+    global _stroke_canvas, _stand_in
     from . import mirror
 
     if _stroke_canvas is None:
@@ -383,28 +386,58 @@ def _stroke_tick() -> float | None:
         return POLL
     canvas = bpy.data.images.get(_stroke_canvas)
     _stroke_canvas = None
-    if canvas is None or len(props.layers(canvas)) == 0:
-        return None
-    cached = _composite_cache.get(canvas.name)
-    if cached is None:
-        return None
-    current = select.read_pixels(canvas)
-    if cached.shape != current.shape or not (current != cached).any():
-        return None
-    sync_canvas(canvas)
-    composite(canvas)
-    overlay.tag_redraw(bpy.context)
+    if _stand_in is not None:
+        paint.restore_color(bpy.context, _stand_in)
+    _finish_stroke(canvas)
+    _stand_in = None
     return None
 
 
-def watch_stroke(image: bpy.types.Image) -> None:
+def _finish_stroke(canvas: bpy.types.Image | None) -> None:
+    if canvas is None or len(props.layers(canvas)) == 0:
+        return
+    cached = _composite_cache.get(canvas.name)
+    if cached is None:
+        return
+    current = select.read_pixels(canvas)
+    if cached.shape != current.shape:
+        return
+    marked = _stand_in is not None and _stand_in.mask is not None and _stand_in.mask.any()
+    if not marked and not (current != cached).any():
+        return
+    sync_canvas(canvas)
+    composite(canvas)
+    overlay.tag_redraw(bpy.context)
+
+
+def stroke_event(event: bpy.types.Event) -> None:
+    """On release, swap stand-in pixels for the wanted color before the paint step is encoded."""
+    if _stand_in is None or _stroke_canvas is None:
+        return
+    if event.type != "LEFTMOUSE" or event.value != "RELEASE":
+        return
+    canvas = bpy.data.images.get(_stroke_canvas)
+    if canvas is None:
+        return
+    current = select.read_pixels(canvas)
+    hit = np.all(np.rint(current[:, :, :3] * 255.0) == _stand_in.painted, axis=2)
+    if not hit.any():
+        return
+    current[hit, :3] = _stand_in.wanted.astype(np.float32) / 255.0
+    select.write_pixels(canvas, current)
+    _stand_in.mask = hit if _stand_in.mask is None else _stand_in.mask | hit
+
+
+def watch_stroke(context: bpy.types.Context, image: bpy.types.Image) -> None:
     """Arm end-of-stroke layer attribution for a native paint stroke on a layered canvas."""
-    global _stroke_canvas
+    global _stroke_canvas, _stand_in
     if len(props.layers(image)) == 0:
         return
     if image.name not in _composite_cache:
         _composite_cache[image.name] = select.read_pixels(image)
     _stroke_canvas = image.name
+    if _stand_in is None:
+        _stand_in = paint.stand_in(context, _composite_cache[image.name])
     if not bpy.app.timers.is_registered(_stroke_tick):
         bpy.app.timers.register(_stroke_tick, first_interval=POLL)
 
@@ -426,7 +459,7 @@ class BLIX_OT_stroke_sync(bpy.types.Operator):
     ) -> set[OperatorReturnItems]:
         image = select.edit_image(context)
         assert image is not None
-        watch_stroke(image)
+        watch_stroke(context, image)
         return {"PASS_THROUGH"}
 
 

@@ -127,7 +127,7 @@ class BLIX_OT_line_anchor(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
-        if not prefs.shift_line() or not _brush_tool_active(context):
+        if not _brush_tool_active(context):
             return False
         image = select.edit_image(context)
         return image is not None and image.size[0] > 0 and image.size[1] > 0
@@ -142,7 +142,7 @@ class BLIX_OT_line_anchor(bpy.types.Operator):
         self._image = image.name
         self._record(context, event)
         mirror.watch_stroke(context)
-        layers.watch_stroke(image)
+        layers.watch_stroke(context, image)
         result = cast(Any, bpy.ops.paint).image_paint("INVOKE_DEFAULT", mode="NORMAL")
         if "RUNNING_MODAL" not in result:
             return {"FINISHED"}
@@ -154,6 +154,7 @@ class BLIX_OT_line_anchor(bpy.types.Operator):
     def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
         if mirror.painting():
             self._record(context, event)
+            layers.stroke_event(event)
             return {"PASS_THROUGH"}
         if event.type in {"MOUSEMOVE", "INBETWEEN_MOUSEMOVE"}:
             return {"FINISHED"}
