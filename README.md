@@ -16,6 +16,9 @@ Build the zip from a checkout:
 blender --command extension build
 ```
 
+Run it with no project `.venv` on PATH (`deactivate` first). Otherwise Blender's Python picks up
+the venv and fails with `ModuleNotFoundError: No module named 'math'`.
+
 ## Use
 
 Panels live in the Image Editor sidebar (`N`) under the **Blix** tab. Tools live in the toolbar
