@@ -201,7 +201,7 @@ class BLIX_OT_draw_shape(bpy.types.Operator):
         pixels[coverage] = self._color
         undo.record(context, image)
         select.write_pixels(image, pixels)
-        undo.record(context, image)
+        undo.record(context, image, coverage)
         overlay.tag_redraw(context)
 
 

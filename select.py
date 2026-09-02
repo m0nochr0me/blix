@@ -244,12 +244,12 @@ def stamp_disc(mask: np.ndarray, center: tuple[float, float], radius: float) -> 
     mask[y0:y1, x0:x1] |= (xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 <= radius * radius
 
 
-def wand_mask(pixels: np.ndarray, seed: tuple[int, int]) -> np.ndarray:
-    """Contiguous region of pixels matching the seed color exactly, 4-connected."""
+def flood_mask(match: np.ndarray, seed: tuple[int, int], diagonal: bool = False) -> np.ndarray:
+    """Connected region of match around seed by scanline fill; diagonal makes it 8-connected."""
     sx, sy = seed
-    match = np.all(pixels == pixels[sy, sx], axis=2)
     height, width = match.shape
     mask = np.zeros((height, width), dtype=bool)
+    reach = 1 if diagonal else 0
     stack = [(sx, sy)]
     while stack:
         x, y = stack.pop()
@@ -261,13 +261,20 @@ def wand_mask(pixels: np.ndarray, seed: tuple[int, int]) -> np.ndarray:
         stops = np.flatnonzero(~row[x + 1 :])
         x1 = x + (int(stops[0]) if stops.size else width - x - 1)
         mask[y, x0 : x1 + 1] = True
+        lo, hi = max(x0 - reach, 0), min(x1 + reach, width - 1)
         for ny in (y - 1, y + 1):
             if not 0 <= ny < height:
                 continue
-            run = match[ny, x0 : x1 + 1] & ~mask[ny, x0 : x1 + 1]
+            run = match[ny, lo : hi + 1] & ~mask[ny, lo : hi + 1]
             starts = np.flatnonzero(run & ~np.concatenate(([False], run[:-1])))
-            stack += [(x0 + int(nx), ny) for nx in starts]
+            stack += [(lo + int(nx), ny) for nx in starts]
     return mask
+
+
+def wand_mask(pixels: np.ndarray, seed: tuple[int, int]) -> np.ndarray:
+    """Contiguous region of pixels matching the seed color exactly, 4-connected."""
+    sx, sy = seed
+    return flood_mask(np.all(pixels == pixels[sy, sx], axis=2), seed)
 
 
 def shape_mask(size: Size, rect: Rect, shape: str) -> np.ndarray:

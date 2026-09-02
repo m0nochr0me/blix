@@ -5,6 +5,8 @@ from typing import Any, cast
 import bpy
 import numpy as np
 
+from . import select
+
 
 def srgb_encode(color: np.ndarray) -> np.ndarray:
     return np.where(
@@ -62,7 +64,7 @@ def stand_in(context: bpy.types.Context, pixels: np.ndarray) -> StandIn | None:
     paint = _image_paint(context)
     brush = paint.brush if paint is not None else None
     owner = _color_owner(context)
-    if brush is None or owner is None or brush.stroke_method in {"LINE", "CURVE"}:
+    if brush is None or owner is None or _paints_at_release(brush):
         return None
     color = list(owner.color)
     wanted = np.rint(srgb_encode(np.array(color, dtype=np.float32)) * 255.0).astype(np.int32)
@@ -84,3 +86,37 @@ def restore_color(context: bpy.types.Context, stand_in: StandIn) -> None:
     owner = _color_owner(context)
     if owner is not None:
         owner.color = stand_in.color
+
+
+def _paints_at_release(brush: bpy.types.Brush) -> bool:
+    """Strokes applied on mouse release, after the stand-in swap hook, cannot use a stand-in."""
+    return brush.image_brush_type == "FILL" or brush.stroke_method in {"LINE", "CURVE"}
+
+
+def fill_mask(
+    context: bpy.types.Context, image: bpy.types.Image, event: bpy.types.Event
+) -> np.ndarray | None:
+    """Pixels the native bucket fill floods from the press point, replicating Blender's flood."""
+    paint = _image_paint(context)
+    brush = paint.brush if paint is not None else None
+    region = context.region
+    if brush is None or region is None or brush.image_brush_type != "FILL":
+        return None
+    if brush.color_type != "COLOR":
+        return None
+    x, y = select.mouse_pixel(region, image, event)
+    width, height = image.size
+    if not (0 <= x < width and 0 <= y < height):
+        return None
+    seed = (int(x), int(y))
+    colors = select.read_pixels(image)
+    if not image.is_float:
+        colors[:, :, :3] *= colors[:, :, 3:4]
+    delta = colors - colors[seed[1], seed[0]]
+    threshold = np.float32(brush.fill_threshold)
+    threshold_sq = threshold * threshold * np.float32(3)
+    within = np.sum(delta * delta, axis=2, dtype=np.float32) <= threshold_sq
+    mask = select.flood_mask(within, seed, diagonal=True)
+    if select.session.image_name == image.name and select.session.mask is not None:
+        mask &= select.session.mask
+    return mask

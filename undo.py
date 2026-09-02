@@ -3,19 +3,22 @@
 from typing import Any, cast
 
 import bpy
+import numpy as np
 
 SETTLE = 0.2
 
 _pending: set[str] = set()
 
 
-def record(context: bpy.types.Context, image: bpy.types.Image) -> None:
-    """Store image pixels as an undo step; bracket every write with a call before and after."""
+def record(
+    context: bpy.types.Context, image: bpy.types.Image, written: np.ndarray | None = None
+) -> None:
+    """Store image pixels as an undo step; written marks pixels a write may have left unchanged."""
     from . import layers
 
     _pending.discard(image.name)
     if len(layers.props.layers(image)):
-        layers.sync_canvas(image)
+        layers.sync_canvas(image, written)
     layers.push_history(image)
     with context.temp_override(edit_image=image):
         cast(Any, bpy.ops.image).invert()

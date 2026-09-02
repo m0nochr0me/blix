@@ -113,7 +113,7 @@ def draw_line(
     pixels[coverage] = paint.brush_colors(context)[0]
     undo.record(context, image)
     select.write_pixels(image, pixels)
-    undo.record(context, image)
+    undo.record(context, image, coverage)
 
 
 class BLIX_OT_line_anchor(bpy.types.Operator):
@@ -142,7 +142,7 @@ class BLIX_OT_line_anchor(bpy.types.Operator):
         self._image = image.name
         self._record(context, event)
         mirror.watch_stroke(context)
-        layers.watch_stroke(context, image)
+        layers.watch_stroke(context, image, event)
         result = cast(Any, bpy.ops.paint).image_paint("INVOKE_DEFAULT", mode="NORMAL")
         if "RUNNING_MODAL" not in result:
             return {"FINISHED"}

@@ -70,6 +70,7 @@ def dither_stamp(
     n: int,
     clip: select.Rect,
     clip_mask: np.ndarray | None = None,
+    written: np.ndarray | None = None,
 ) -> None:
     cx, cy = center
     x0 = max(int(math.floor(cx - radius)), clip[0])
@@ -86,16 +87,22 @@ def dither_stamp(
     region = pixels[y0:y1, x0:x1]
     region[mask] = color
     pixels[y0:y1, x0:x1] = region
+    if written is not None:
+        written[y0:y1, x0:x1] |= mask
 
 
 def _apply_buffer(
     pixels: np.ndarray, rect: select.Rect, buffer: np.ndarray, clip_mask: np.ndarray | None
-) -> None:
+) -> np.ndarray:
+    """Write opaque buffer pixels into rect; returns the full-size mask of written pixels."""
     region = pixels[rect[1] : rect[3], rect[0] : rect[2]]
     write = buffer[:, :, 3] > 0.0
     if clip_mask is not None:
         write &= clip_mask[rect[1] : rect[3], rect[0] : rect[2]]
     region[write] = buffer[write]
+    written = np.zeros(pixels.shape[:2], dtype=bool)
+    written[rect[1] : rect[3], rect[0] : rect[2]] = write
+    return written
 
 
 def _gradient_colors(context: bpy.types.Context) -> tuple[np.ndarray, np.ndarray]:
@@ -194,11 +201,11 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
         buffer = dither_region(
             rect, self._start, self._end, color_a, color_b, props.dither_size(scene)
         )
-        _apply_buffer(pixels, rect, buffer, clip_mask)
+        written = _apply_buffer(pixels, rect, buffer, clip_mask)
         undo.record(context, image)
         select.write_pixels(image, pixels)
         preview.clear()
-        undo.record(context, image)
+        undo.record(context, image, written)
         overlay.tag_redraw(context)
 
 
@@ -210,6 +217,7 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
     bl_options = {"REGISTER", "INTERNAL"}
 
     _snapshot: np.ndarray
+    _written: np.ndarray
     _last: tuple[float, float]
     _color: np.ndarray
 
@@ -222,6 +230,7 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
         region = context.region
         assert region is not None
         self._snapshot = select.read_pixels(image).copy()
+        self._written = np.zeros(self._snapshot.shape[:2], dtype=bool)
         primary, secondary = paint.brush_colors(context)
         if event.ctrl:
             scene = context.scene
@@ -258,7 +267,9 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
                 self._last[1] + (point[1] - self._last[1]) * factor,
             )
             for stamp in mirror.centers(center, size, *axes):
-                dither_stamp(pixels, stamp, radius, self._color, density, n, clip, clip_mask)
+                dither_stamp(
+                    pixels, stamp, radius, self._color, density, n, clip, clip_mask, self._written
+                )
         select.write_pixels(image, pixels)
         self._last = point
         overlay.tag_redraw(context)
@@ -275,7 +286,7 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "RELEASE":
-            undo.record(context, image)
+            undo.record(context, image, self._written)
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:

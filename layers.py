@@ -1,6 +1,5 @@
 """Layer stack on a canvas Image with numpy compositing. Index 0 is the top layer."""
 
-from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
@@ -78,11 +77,16 @@ _sync_targets: dict[str, int] = {}
 
 _HISTORY_CAP = 32
 _HistoryEntry = tuple[np.ndarray, dict[str, np.ndarray]]
-_history: dict[str, deque[_HistoryEntry]] = {}
+_history: dict[str, list[_HistoryEntry]] = {}
+_cursor: dict[str, int] = {}
+
+
+def _same_layers(a: dict[str, np.ndarray], b: dict[str, np.ndarray]) -> bool:
+    return a.keys() == b.keys() and all(np.array_equal(a[name], b[name]) for name in a)
 
 
 def push_history(canvas: bpy.types.Image) -> None:
-    """Snapshot canvas and layer pixels so undo can restore layers by canvas state."""
+    """Snapshot canvas and layer pixels after the cursor entry so undo can walk layer states."""
     if len(props.layers(canvas)) == 0:
         return
     layer_map = {
@@ -90,33 +94,61 @@ def push_history(canvas: bpy.types.Image) -> None:
         for layer in props.layers(canvas)
         if layer.image is not None
     }
-    entries = _history.setdefault(canvas.name, deque(maxlen=_HISTORY_CAP))
+    entries = _history.setdefault(canvas.name, [])
     pixels = select.read_pixels(canvas)
-    if entries and np.array_equal(entries[-1][0], pixels):
-        entries[-1] = (entries[-1][0], layer_map)
-        return
+    cursor = _cursor.get(canvas.name, len(entries) - 1)
+    if 0 <= cursor < len(entries):
+        saved, saved_layers = entries[cursor]
+        if np.array_equal(saved, pixels) and _same_layers(saved_layers, layer_map):
+            return
+        del entries[cursor + 1 :]
     entries.append((pixels, layer_map))
+    del entries[:-_HISTORY_CAP]
+    _cursor[canvas.name] = len(entries) - 1
 
 
-def _apply_history(canvas: bpy.types.Image, current: np.ndarray) -> bool:
+def _match_index(
+    entries: list[_HistoryEntry], current: np.ndarray, cursor: int, step: int
+) -> int | None:
+    """Entry equal to current, nearest along step; an unchanged canvas moves one equal neighbor."""
+
+    def equal(index: int) -> bool:
+        pixels = entries[index][0]
+        return pixels.shape == current.shape and np.array_equal(pixels, current)
+
+    count = len(entries)
+    if equal(cursor):
+        neighbor = cursor + step
+        return neighbor if 0 <= neighbor < count and equal(neighbor) else cursor
+    ahead = range(cursor + step, count if step > 0 else -1, step)
+    behind = range(cursor - step, -1 if step > 0 else count, -step)
+    for index in (*ahead, *behind):
+        if equal(index):
+            return index
+    return None
+
+
+def _apply_history(canvas: bpy.types.Image, current: np.ndarray, step: int) -> bool:
     entries = _history.get(canvas.name)
-    if entries is None:
+    if not entries:
         return False
-    for pixels, layer_map in reversed(entries):
-        if pixels.shape != current.shape or not np.array_equal(pixels, current):
+    cursor = min(max(_cursor.get(canvas.name, 0), 0), len(entries) - 1)
+    index = _match_index(entries, current, cursor, step)
+    if index is None:
+        return False
+    layer_map = entries[index][1]
+    for layer in props.layers(canvas):
+        image = layer.image
+        if image is None:
             continue
-        for layer in props.layers(canvas):
-            image = layer.image
-            if image is None:
-                continue
-            saved = layer_map.get(image.name)
-            if saved is None or tuple(image.size) != (saved.shape[1], saved.shape[0]):
-                continue
-            if not np.array_equal(select.read_pixels(image), saved):
-                select.write_pixels(image, saved)
-        _composite_cache[canvas.name] = current
-        return True
-    return False
+        saved = layer_map.get(image.name)
+        if saved is None or tuple(image.size) != (saved.shape[1], saved.shape[0]):
+            continue
+        if not np.array_equal(select.read_pixels(image), saved):
+            select.write_pixels(image, saved)
+    _cursor[canvas.name] = index
+    _composite_cache[canvas.name] = current
+    return True
 
 
 def _pack_layers(canvas: bpy.types.Image) -> None:
@@ -157,15 +189,20 @@ def _sync_target(canvas: bpy.types.Image) -> Any:
     return active_layer(canvas)
 
 
-def _changed_mask(current: np.ndarray, cached: np.ndarray) -> np.ndarray:
-    """Pixels the canvas changed since the cache, plus stand-in pixels swapped back on release."""
+def _changed_mask(
+    current: np.ndarray, cached: np.ndarray, written: np.ndarray | None = None
+) -> np.ndarray:
+    """Pixels the canvas changed since the cache, plus swapped stand-in and written pixels."""
     mask = np.any(current != cached, axis=2)
     if _stand_in is not None and _stand_in.mask is not None and _stand_in.mask.shape == mask.shape:
         mask |= _stand_in.mask
+    if written is not None and written.shape == mask.shape:
+        mask |= written
     return mask
 
 
-def sync_canvas(canvas: bpy.types.Image) -> None:
+def sync_canvas(canvas: bpy.types.Image, written: np.ndarray | None = None) -> None:
+    """Attribute canvas changes to the active layer; written marks writes the diff cannot see."""
     target = _sync_target(canvas)
     _sync_targets[canvas.name] = props.layers_index(canvas)
     current = select.read_pixels(canvas)
@@ -173,7 +210,7 @@ def sync_canvas(canvas: bpy.types.Image) -> None:
     if cached is None or cached.shape != current.shape:
         _composite_cache[canvas.name] = current
         return
-    mask = _changed_mask(current, cached)
+    mask = _changed_mask(current, cached, written)
     if not mask.any():
         return
     if target is None or target.image is None or target.lock:
@@ -383,10 +420,11 @@ def flatten(canvas: bpy.types.Image) -> None:
 POLL = 0.05
 _stroke_canvas: str | None = None
 _stand_in: paint.StandIn | None = None
+_fill_mask: np.ndarray | None = None
 
 
 def _stroke_tick() -> float | None:
-    global _stroke_canvas, _stand_in
+    global _stroke_canvas, _stand_in, _fill_mask
     from . import mirror
 
     if _stroke_canvas is None:
@@ -399,6 +437,7 @@ def _stroke_tick() -> float | None:
         paint.restore_color(bpy.context, _stand_in)
     _finish_stroke(canvas)
     _stand_in = None
+    _fill_mask = None
     return None
 
 
@@ -409,9 +448,9 @@ def _finish_stroke(canvas: bpy.types.Image | None) -> None:
     if cached is None:
         return
     current = select.read_pixels(canvas)
-    if cached.shape != current.shape or not _changed_mask(current, cached).any():
+    if cached.shape != current.shape or not _changed_mask(current, cached, _fill_mask).any():
         return
-    sync_canvas(canvas)
+    sync_canvas(canvas, _fill_mask)
     composite(canvas)
     overlay.tag_redraw(bpy.context)
 
@@ -451,16 +490,19 @@ def stroke_event(event: bpy.types.Event) -> None:
     _stand_in.mask = hit if _stand_in.mask is None else _stand_in.mask | hit
 
 
-def watch_stroke(context: bpy.types.Context, image: bpy.types.Image) -> None:
+def watch_stroke(
+    context: bpy.types.Context, image: bpy.types.Image, event: bpy.types.Event
+) -> None:
     """Arm end-of-stroke layer attribution for a native paint stroke on a layered canvas."""
-    global _stroke_canvas, _stand_in
+    global _stroke_canvas, _stand_in, _fill_mask
     if len(props.layers(image)) == 0:
         return
     if image.name not in _composite_cache:
         _composite_cache[image.name] = select.read_pixels(image)
     _stroke_canvas = image.name
-    if _stand_in is None:
+    if _stand_in is None and _fill_mask is None:
         _stand_in = paint.stand_in(context, _composite_cache[image.name])
+        _fill_mask = paint.fill_mask(context, image, event)
     if not bpy.app.timers.is_registered(_stroke_tick):
         bpy.app.timers.register(_stroke_tick, first_interval=POLL)
 
@@ -482,7 +524,7 @@ class BLIX_OT_stroke_sync(bpy.types.Operator):
     ) -> set[OperatorReturnItems]:
         image = select.edit_image(context)
         assert image is not None
-        watch_stroke(context, image)
+        watch_stroke(context, image, event)
         return {"PASS_THROUGH"}
 
 
@@ -512,11 +554,21 @@ def _clear_cache(*_args: Any) -> None:
     _composite_cache.clear()
     _sync_targets.clear()
     _history.clear()
+    _cursor.clear()
 
 
 @persistent
-def _refresh_cache(*_args: Any) -> None:
-    """Undo restored canvas pixels; restore matching layer state, else re-baseline the cache."""
+def _undo_refresh(*_args: Any) -> None:
+    _refresh_cache(-1)
+
+
+@persistent
+def _redo_refresh(*_args: Any) -> None:
+    _refresh_cache(1)
+
+
+def _refresh_cache(step: int) -> None:
+    """Undo or redo moved the canvas; restore matching layer state, else re-baseline the cache."""
     for name in list(_composite_cache):
         if bpy.data.images.get(name) is None:
             _composite_cache.pop(name)
@@ -525,7 +577,7 @@ def _refresh_cache(*_args: Any) -> None:
         if len(props.layers(image)) == 0:
             continue
         pixels = select.read_pixels(image)
-        if _apply_history(image, pixels):
+        if _apply_history(image, pixels, step):
             restored = True
             continue
         if _repair_stale_layers(image):
@@ -778,8 +830,8 @@ def register() -> None:
     image_cls.blix_canvas = bpy.props.PointerProperty(type=bpy.types.Image)
     bpy.app.handlers.save_pre.append(_pack_on_save)
     bpy.app.handlers.load_post.append(_clear_cache)
-    bpy.app.handlers.undo_post.append(_refresh_cache)
-    bpy.app.handlers.redo_post.append(_refresh_cache)
+    bpy.app.handlers.undo_post.append(_undo_refresh)
+    bpy.app.handlers.redo_post.append(_redo_refresh)
     _register_keymap()
 
 
@@ -789,8 +841,8 @@ def unregister() -> None:
     if bpy.app.timers.is_registered(_stroke_tick):
         bpy.app.timers.unregister(_stroke_tick)
     _stroke_canvas = None
-    bpy.app.handlers.redo_post.remove(_refresh_cache)
-    bpy.app.handlers.undo_post.remove(_refresh_cache)
+    bpy.app.handlers.redo_post.remove(_redo_refresh)
+    bpy.app.handlers.undo_post.remove(_undo_refresh)
     bpy.app.handlers.load_post.remove(_clear_cache)
     bpy.app.handlers.save_pre.remove(_pack_on_save)
     _composite_cache.clear()
