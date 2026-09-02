@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import bpy
 import numpy as np
 
-from . import overlay, select, undo
+from . import overlay, select
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
@@ -98,20 +98,6 @@ def _rotated_quad(rect: select.Rect, angle: float) -> select.Quad:
     return quad
 
 
-def _commit_buffer(
-    context: bpy.types.Context,
-    image: bpy.types.Image,
-    origin: tuple[int, int],
-    buffer: np.ndarray,
-    float_mask: np.ndarray,
-) -> None:
-    clear_mask = select.session.mask
-    assert clear_mask is not None
-    undo.record(context, image)
-    select.apply_buffer(image, clear_mask, buffer, origin)
-    select.finish_float(context, image, select.place_mask(image, float_mask, origin))
-
-
 def _preview_buffer(buffer: np.ndarray, origin: tuple[int, int]) -> None:
     ox, oy = origin
     select.session.texture = select.make_texture(buffer)
@@ -146,11 +132,8 @@ class BLIX_OT_select_flip(bpy.types.Operator):
         assert image is not None and rect is not None and mask is not None
         buffer, sub = select.lift(image, mask, rect)
         flipped = flip_buffer(buffer, self.horizontal)
-        origin = (rect[0], rect[1])
-        undo.record(context, image)
-        select.apply_buffer(image, mask, flipped, origin)
-        placed = select.place_mask(image, flip_buffer(sub, self.horizontal), origin)
-        select.finish_float(context, image, placed)
+        flipped_sub = flip_buffer(sub, self.horizontal)
+        select.commit_float(context, image, flipped, flipped_sub, (rect[0], rect[1]))
         return {"FINISHED"}
 
 
@@ -175,7 +158,7 @@ class BLIX_OT_select_rotate90(bpy.types.Operator):
         buffer, sub = select.lift(image, mask, rect)
         rotated = rotate90_buffer(buffer, self.turns)
         origin = centered_origin(rect, (rotated.shape[1], rotated.shape[0]))
-        _commit_buffer(context, image, origin, rotated, rotate90_buffer(sub, self.turns))
+        select.commit_float(context, image, rotated, rotate90_buffer(sub, self.turns), origin)
         return {"FINISHED"}
 
 
@@ -314,7 +297,9 @@ class BLIX_OT_select_scale(bpy.types.Operator):
                 overlay.tag_redraw(context)
                 return {"CANCELLED"}
             scaled = self._resampled()
-            _commit_buffer(context, image, self._origin, scaled[:, :, :4], scaled[:, :, 4] > 0.5)
+            select.commit_float(
+                context, image, scaled[:, :, :4], scaled[:, :, 4] > 0.5, self._origin
+            )
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:
@@ -402,7 +387,7 @@ class BLIX_OT_select_rotate(bpy.types.Operator):
                 return {"CANCELLED"}
             rotated = self._rotated()
             origin = centered_origin(rect, (rotated.shape[1], rotated.shape[0]))
-            _commit_buffer(context, image, origin, rotated[:, :, :4], rotated[:, :, 4] > 0.5)
+            select.commit_float(context, image, rotated[:, :, :4], rotated[:, :, 4] > 0.5, origin)
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:

@@ -1,7 +1,7 @@
 """Marquee pixel selection with floating-buffer move, as a paint-mode tool."""
 
 import math
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import bpy
 import gpu
@@ -35,6 +35,15 @@ Quad = list[tuple[float, float]]
 Affine = tuple[float, float, float, float]
 
 
+class Carry(NamedTuple):
+    """Pixels the last commit placed at session.rect, what lay beneath, and the readback."""
+
+    pixels: np.ndarray
+    under: np.ndarray
+    expect: np.ndarray
+    target: str
+
+
 class _Session:
     def __init__(self) -> None:
         self.image_name = ""
@@ -51,6 +60,7 @@ class _Session:
         self.tex_quad: Quad | None = None
         self.texture: gpu.types.GPUTexture | None = None
         self.keep_source = False
+        self.carry: Carry | None = None
 
     def reset(self) -> None:
         self.__init__()
@@ -302,26 +312,39 @@ def place_mask(image: bpy.types.Image, sub: np.ndarray, origin: tuple[int, int])
 
 
 def lift(image: bpy.types.Image, mask: np.ndarray, rect: Rect) -> tuple[np.ndarray, np.ndarray]:
+    """Masked pixels at rect; carried pixels of the last commit while the image still holds them."""
     x0, y0, x1, y1 = rect
-    buffer = read_pixels(pixel_target(image))[y0:y1, x0:x1].copy()
+    target = pixel_target(image)
+    region = read_pixels(target)[y0:y1, x0:x1]
     sub = mask[y0:y1, x0:x1].copy()
+    carry = session.carry
+    if carry is not None:
+        if carry.target == target.name and np.array_equal(region[sub], carry.expect[sub]):
+            return carry.pixels.copy(), sub
+        session.carry = None
+    buffer = region.copy()
     buffer[~sub] = 0.0
     return buffer, sub
 
 
-def apply_buffer(
-    image: bpy.types.Image, clear_mask: np.ndarray, buffer: np.ndarray, origin: tuple[int, int]
-) -> None:
-    target = pixel_target(image)
-    pixels = read_pixels(target)
-    pixels[clear_mask] = 0.0
+def _restore(pixels: np.ndarray, mask: np.ndarray) -> None:
+    """Put back what lay beneath carried pixels, or clear a first lift to transparent."""
+    carry, rect = session.carry, session.rect
+    if carry is None or rect is None:
+        pixels[mask] = 0.0
+        return
+    x0, y0, x1, y1 = rect
+    sub = mask[y0:y1, x0:x1]
+    pixels[y0:y1, x0:x1][sub] = carry.under[sub]
+
+
+def _paste(pixels: np.ndarray, buffer: np.ndarray, origin: tuple[int, int]) -> None:
     buf_h, buf_w = buffer.shape[:2]
     ox, oy = origin
-    width, height = target.size
+    height, width = pixels.shape[:2]
     cx0, cy0 = max(ox, 0), max(oy, 0)
     cx1, cy1 = min(ox + buf_w, width), min(oy + buf_h, height)
     if cx0 >= cx1 or cy0 >= cy1:
-        write_pixels(target, pixels)
         return
     sub = buffer[cy0 - oy : cy1 - oy, cx0 - ox : cx1 - ox]
     dst = pixels[cy0:cy1, cx0:cx1]
@@ -333,7 +356,46 @@ def apply_buffer(
         sub[:, :, :3] * src_a + dst[:, :, :3] * dst_a * (1.0 - src_a)
     ) / safe_a
     pixels[cy0:cy1, cx0:cx1, 3:4] = out_a
+
+
+def _carried(
+    target: bpy.types.Image, buffer: np.ndarray, origin: tuple[int, int], under: np.ndarray
+) -> Carry:
+    assert session.rect is not None and session.mask is not None
+    x0, y0, x1, y1 = session.rect
+    ox, oy = origin
+    pixels = buffer[y0 - oy : y1 - oy, x0 - ox : x1 - ox].copy()
+    pixels[~session.mask[y0:y1, x0:x1]] = 0.0
+    return Carry(pixels, under, read_pixels(target)[y0:y1, x0:x1], target.name)
+
+
+def commit_float(
+    context: bpy.types.Context,
+    image: bpy.types.Image,
+    buffer: np.ndarray,
+    float_mask: np.ndarray,
+    origin: tuple[int, int],
+) -> None:
+    """Bake buffer over the target and carry it, so a later transform moves only these pixels."""
+    from . import layers
+
+    undo.record(context, image)
+    target = pixel_target(image)
+    pixels = read_pixels(target)
+    if not session.keep_source:
+        assert session.mask is not None
+        _restore(pixels, session.mask)
+    session.drop_float()
+    session.set_mask(place_mask(image, float_mask, origin))
+    rect = session.rect
+    under = None if rect is None else pixels[rect[1] : rect[3], rect[0] : rect[2]].copy()
+    _paste(pixels, buffer, origin)
     write_pixels(target, pixels)
+    session.carry = None if under is None else _carried(target, buffer, origin, under)
+    if len(props.layers(image)):
+        layers.composite(image)
+    undo.record(context, image)
+    overlay.tag_redraw(context)
 
 
 def clip_rect(size: Size, rect: Rect) -> Rect | None:
@@ -344,19 +406,6 @@ def clip_rect(size: Size, rect: Rect) -> Rect | None:
     if x0 >= x1 or y0 >= y1:
         return None
     return (x0, y0, x1, y1)
-
-
-def finish_float(
-    context: bpy.types.Context, image: bpy.types.Image, new_mask: np.ndarray | None
-) -> None:
-    from . import layers
-
-    session.drop_float()
-    session.set_mask(new_mask)
-    if len(props.layers(image)):
-        layers.composite(image)
-    undo.record(context, image)
-    overlay.tag_redraw(context)
 
 
 def start_float(image: bpy.types.Image, mask: np.ndarray, rect: Rect) -> None:
@@ -1051,10 +1100,7 @@ class BLIX_OT_select_move(bpy.types.Operator):
         assert session.mask is not None and session.float_mask is not None
         dx, dy = session.offset
         origin = (session.rect[0] + dx, session.rect[1] + dy)
-        clear = np.zeros_like(session.mask) if session.keep_source else session.mask
-        undo.record(context, image)
-        apply_buffer(image, clear, session.buffer, origin)
-        finish_float(context, image, place_mask(image, session.float_mask, origin))
+        commit_float(context, image, session.buffer, session.float_mask, origin)
 
 
 class BLIX_OT_select_clear(bpy.types.Operator):

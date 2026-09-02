@@ -51,8 +51,11 @@ A selection is a per-pixel mask, so it can be any shape. Marquees snap to whole 
 drags a freehand outline, the brush paints the mask with a round brush (diameter in the Selection
 panel), and the wand click-selects the contiguous region of one color. Moving or transforming
 lifts the masked pixels into a floating buffer drawn with a nearest-neighbor GPU preview; the
-commit clears the masked source and composites the buffer with straight-alpha over. Marching ants
-trace the mask itself, holes included.
+commit clears the masked source and composites the buffer with straight-alpha over. Only the
+pixels lifted first move: a second move or transform carries that same buffer and restores what
+lay beneath it, instead of re-lifting whatever the selection now covers. Painting inside the
+moved footprint drops the carry, so the next lift reads the canvas again. Marching ants trace
+the mask itself, holes included.
 
 | Action                  | Input                      |
 | ----------------------- | -------------------------- |
