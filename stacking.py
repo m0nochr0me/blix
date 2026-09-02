@@ -203,7 +203,7 @@ class BLIX_OT_stack_export(bpy.types.Operator, ExportHelper):
         canvas = layers.resolve_canvas(context)
         assert canvas is not None
         cast(Any, self).filepath = f"{canvas.name}_stack.png"
-        return ExportHelper.invoke(self, context, event)
+        return cast("set[OperatorReturnItems]", ExportHelper.invoke(self, context, event))
 
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         canvas = layers.resolve_canvas(context)

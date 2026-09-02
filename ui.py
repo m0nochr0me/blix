@@ -277,6 +277,7 @@ class BLIX_PT_palette(bpy.types.Panel):
         assert layout is not None
         assert tool_settings is not None
         image_paint = tool_settings.image_paint
+        assert image_paint is not None
         layout.operator("blix.palette_import", icon="IMPORT")
         layout.template_ID(image_paint, "palette", new="palette.new")
         if image_paint.palette is not None:

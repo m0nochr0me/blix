@@ -58,9 +58,9 @@ class BLIX_OT_palette_import(bpy.types.Operator, ImportHelper):
 
         palette = bpy.data.palettes.new(path.stem)
         for color in colors:
-            palette.colors.new().color = color
+            cast(Any, palette.colors.new()).color = color
         tool_settings = context.tool_settings
-        if tool_settings is not None:
+        if tool_settings is not None and tool_settings.image_paint is not None:
             tool_settings.image_paint.palette = palette
 
         report = f"{len(colors)} colors from {path.name}"

@@ -456,7 +456,7 @@ class Preview:
     def draw(self, region: bpy.types.Region, image: bpy.types.Image) -> None:
         if self.texture is None or self.rect is None or self.image_name != image.name:
             return
-        corners = [overlay.image_to_region(region, image, x, y) for x, y in rect_quad(self.rect)]
+        corners = _to_region(region, image, rect_quad(self.rect))
         draw_texture_quad(corners, self.texture, not image.is_float)
 
 
