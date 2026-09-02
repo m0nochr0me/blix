@@ -1,6 +1,5 @@
 """Layer stack on a canvas Image with numpy compositing. Index 0 is the top layer."""
 
-import re
 from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -231,7 +230,9 @@ def _active_changed(self: bpy.types.Image, context: bpy.types.Context) -> None:
 
 
 class BlixLayer(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty(name="Name", default="Layer")
+    number: bpy.props.IntProperty(name="Number", min=0)
+    copy: bpy.props.IntProperty(name="Copy", min=0)
+    label: bpy.props.StringProperty(name="Name")
     image: bpy.props.PointerProperty(type=bpy.types.Image)
     opacity: bpy.props.FloatProperty(
         name="Opacity", default=1.0, min=0.0, max=1.0, update=_layer_changed
@@ -244,6 +245,18 @@ class BlixLayer(bpy.types.PropertyGroup):
     height: bpy.props.IntProperty(
         name="Height", default=1, min=1, soft_max=16, update=_stack_changed
     )
+
+
+def layer_tag(layer: Any) -> str:
+    """Metadata part of a layer name: L<number>, plus .C<copy> for duplicates."""
+    tag = f"L{layer.number:03d}"
+    return f"{tag}.C{layer.copy:03d}" if layer.copy else tag
+
+
+def layer_name(layer: Any) -> str:
+    """Full layer name: tag, then -<label> when the layer has one."""
+    tag = layer_tag(layer)
+    return f"{tag}-{layer.label}" if layer.label else tag
 
 
 def active_layer(canvas: bpy.types.Image) -> Any:
@@ -279,31 +292,30 @@ def _new_layer_image(canvas: bpy.types.Image, name: str) -> bpy.types.Image:
 
 def init_layers(canvas: bpy.types.Image) -> None:
     pixels = select.read_pixels(canvas)
-    background = _clone_image(canvas, "Background", pixels)
     layer = props.layers(canvas).add()
-    layer.name = "Background"
-    layer.image = background
+    layer.label = "Background"
+    layer.image = _clone_image(canvas, layer_name(layer), pixels)
     props.set_layers_index(canvas, 0)
     _composite_cache[canvas.name] = pixels
     _sync_targets[canvas.name] = 0
     push_history(canvas)
 
 
-def next_layer_name(canvas: bpy.types.Image) -> str:
-    numbers = [
-        int(match.group(1))
-        for layer in props.layers(canvas)
-        if (match := re.fullmatch(r"Layer (\d+)", layer.name))
-    ]
-    return f"Layer {max(numbers, default=0) + 1}"
+def next_layer_number(canvas: bpy.types.Image) -> int:
+    return max((layer.number for layer in props.layers(canvas)), default=-1) + 1
 
 
-def add_layer(canvas: bpy.types.Image, name: str) -> None:
+def next_copy_number(canvas: bpy.types.Image, number: int) -> int:
+    copies = (layer.copy for layer in props.layers(canvas) if layer.number == number)
+    return max(copies, default=0) + 1
+
+
+def add_layer(canvas: bpy.types.Image, number: int) -> None:
     sync_canvas(canvas)
     stack = props.layers(canvas)
     layer = stack.add()
-    layer.name = name
-    layer.image = _new_layer_image(canvas, name)
+    layer.number = number
+    layer.image = _new_layer_image(canvas, layer_name(layer))
     index = max(props.layers_index(canvas), 0)
     stack.move(len(stack) - 1, index)
     props.set_layers_index(canvas, index)
@@ -318,28 +330,19 @@ def remove_layer(canvas: bpy.types.Image, index: int) -> None:
     composite(canvas)
 
 
-def copy_layer_name(canvas: bpy.types.Image, source: str) -> str:
-    names = {layer.name for layer in props.layers(canvas)}
-    name = f"{source} Copy"
-    counter = 2
-    while name in names:
-        name = f"{source} Copy {counter}"
-        counter += 1
-    return name
-
-
 def duplicate_layer(canvas: bpy.types.Image, index: int) -> None:
     sync_canvas(canvas)
     stack = props.layers(canvas)
     source = stack[index]
-    name = copy_layer_name(canvas, source.name)
     layer = stack.add()
-    layer.name = name
+    layer.number = source.number
+    layer.copy = next_copy_number(canvas, source.number)
+    layer.label = source.label
     layer.opacity = source.opacity
     layer.blend = source.blend
     layer.visible = source.visible
     layer.height = source.height
-    layer.image = _clone_image(canvas, layer.name, select.read_pixels(source.image))
+    layer.image = _clone_image(canvas, layer_name(layer), select.read_pixels(source.image))
     stack.move(len(stack) - 1, index)
     props.set_layers_index(canvas, index)
     composite(canvas)
@@ -353,7 +356,7 @@ def merge_down(canvas: bpy.types.Image, index: int) -> None:
     merged = blend_over(
         select.read_pixels(below.image), select.read_pixels(above.image), above.blend, above.opacity
     )
-    below.image = _clone_image(canvas, below.name, merged)
+    below.image = _clone_image(canvas, layer_name(below), merged)
     stack.remove(index)
     props.set_layers_index(canvas, index)
     composite(canvas)
@@ -370,8 +373,8 @@ def flatten(canvas: bpy.types.Image) -> None:
             props.set_canvas_of(layer.image, None)
     stack.clear()
     layer = stack.add()
-    layer.name = "Background"
-    layer.image = _new_layer_image(canvas, "Background")
+    layer.label = "Background"
+    layer.image = _new_layer_image(canvas, layer_name(layer))
     select.write_pixels(layer.image, pixels)
     layer.image.pack()
     props.set_layers_index(canvas, 0)
@@ -598,7 +601,7 @@ class BLIX_OT_layer_add(_CanvasOperator):
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         canvas = resolve_canvas(context)
         assert canvas is not None
-        add_layer(canvas, next_layer_name(canvas))
+        add_layer(canvas, next_layer_number(canvas))
         _pack_layers(canvas)
         cast(Any, bpy.ops.ed).undo_push(message="Blix Add Layer")
         return {"FINISHED"}

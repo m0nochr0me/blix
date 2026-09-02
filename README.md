@@ -119,6 +119,9 @@ Two native-brush extras, toggled in the add-on preferences:
 _Initialize Layers_ turns the current image into a canvas with a Background layer. Layers are
 Image datablocks packed into the .blend; the canvas holds the numpy composite. Index 0 is the top
 layer. Blend modes: Mix, Multiply, Screen, Overlay, Add, Subtract, Darken, Lighten, Difference.
+Layers are tagged `L<number>` in creation order (the Background is `L000`); duplicates keep the
+source number and add `.C<copy>`. An optional name follows a dash (`L000-Background`) and is
+edited by double-clicking it in the list; the tag is fixed.
 
 _Edit Active Layer_ switches the editor to the layer image for painting; _Show Composite_ switches
 back and recomposites. Edits made straight on the composite canvas are synced into the active layer

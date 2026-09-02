@@ -156,7 +156,10 @@ class BLIX_UL_layers(bpy.types.UIList):
     ) -> None:
         assert item is not None
         row = layout.row(align=True)
-        row.prop(item, "name", text="", emboss=False)
+        tag = row.row(align=True)
+        tag.alignment = "LEFT"
+        tag.label(text=layers.layer_tag(item))
+        row.prop(item, "label", text="", emboss=False)
         row.prop(
             item, "visible", text="", icon="HIDE_OFF" if item.visible else "HIDE_ON", emboss=False
         )
