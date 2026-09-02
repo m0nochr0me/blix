@@ -4,6 +4,7 @@ import importlib
 import sys
 
 from . import (
+    aids,
     clipboard,
     dither,
     erase,
@@ -36,6 +37,7 @@ _modules = (
     transform,
     clipboard,
     layers,
+    aids,
     erase,
     line,
     shapes,

@@ -185,6 +185,12 @@ class BLIX_PT_layers(bpy.types.Panel):
             "blix.layer_view_toggle",
             text="Show Composite" if editing else "Edit Active Layer",
         )
+        scene = context.scene
+        if scene is not None:
+            row = layout.row(align=True)
+            row.prop(scene, "blix_layer_dim", toggle=True)
+            row.prop(scene, "blix_layer_hatch", toggle=True)
+            row.prop(scene, "blix_layer_outline", toggle=True)
         row = layout.row()
         row.template_list(
             "BLIX_UL_layers", "", canvas, "blix_layers", canvas, "blix_layers_index", rows=4

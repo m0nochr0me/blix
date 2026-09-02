@@ -158,6 +158,14 @@ def _sync_target(canvas: bpy.types.Image) -> Any:
     return active_layer(canvas)
 
 
+def _changed_mask(current: np.ndarray, cached: np.ndarray) -> np.ndarray:
+    """Pixels the canvas changed since the cache, plus stand-in pixels swapped back on release."""
+    mask = np.any(current != cached, axis=2)
+    if _stand_in is not None and _stand_in.mask is not None and _stand_in.mask.shape == mask.shape:
+        mask |= _stand_in.mask
+    return mask
+
+
 def sync_canvas(canvas: bpy.types.Image) -> None:
     target = _sync_target(canvas)
     _sync_targets[canvas.name] = props.layers_index(canvas)
@@ -166,9 +174,7 @@ def sync_canvas(canvas: bpy.types.Image) -> None:
     if cached is None or cached.shape != current.shape:
         _composite_cache[canvas.name] = current
         return
-    mask = np.any(current != cached, axis=2)
-    if _stand_in is not None and _stand_in.mask is not None and _stand_in.mask.shape == mask.shape:
-        mask |= _stand_in.mask
+    mask = _changed_mask(current, cached)
     if not mask.any():
         return
     if target is None or target.image is None or target.lock:
@@ -400,14 +406,28 @@ def _finish_stroke(canvas: bpy.types.Image | None) -> None:
     if cached is None:
         return
     current = select.read_pixels(canvas)
-    if cached.shape != current.shape:
-        return
-    marked = _stand_in is not None and _stand_in.mask is not None and _stand_in.mask.any()
-    if not marked and not (current != cached).any():
+    if cached.shape != current.shape or not _changed_mask(current, cached).any():
         return
     sync_canvas(canvas)
     composite(canvas)
     overlay.tag_redraw(bpy.context)
+
+
+def stroke_pixels(canvas: bpy.types.Image) -> np.ndarray | None:
+    """Canvas RGBA where the in-progress native stroke changed pixels, transparent elsewhere."""
+    if _stroke_canvas != canvas.name:
+        return None
+    cached = _composite_cache.get(canvas.name)
+    if cached is None:
+        return None
+    current = select.read_pixels(canvas)
+    if cached.shape != current.shape:
+        return None
+    mask = _changed_mask(current, cached)
+    if not mask.any():
+        return None
+    current[~mask] = 0.0
+    return current
 
 
 def stroke_event(event: bpy.types.Event) -> None:

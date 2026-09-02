@@ -400,6 +400,7 @@ def _get_preview_shader() -> gpu.types.GPUShader:
     info.sampler(0, "FLOAT_2D", "image")
     info.push_constant("MAT4", "ModelViewProjectionMatrix")
     info.push_constant("BOOL", "srgb")
+    info.push_constant("FLOAT", "opacity")
     info.fragment_out(0, "VEC4", "fragColor")
     info.vertex_source(
         "void main()"
@@ -412,6 +413,8 @@ def _get_preview_shader() -> gpu.types.GPUShader:
         "{ivec2 size = textureSize(image, 0);"
         "ivec2 texel = ivec2(clamp(uv_interp, 0.0, 0.99999) * vec2(size));"
         "vec4 color = texelFetch(image, texel, 0);"
+        "if (color.a <= 0.0) discard;"
+        "color.a *= opacity;"
         "fragColor = srgb ? vec4(srgb_to_linear(color.rgb), color.a) : color;}"
     )
     _preview_shader = gpu.shader.create_from_info(info)
@@ -566,7 +569,9 @@ def _select_tool_active(context: bpy.types.Context) -> bool:
     return tool is not None and tool.idname in _SELECT_TOOLS
 
 
-def draw_texture_quad(corners: Quad, texture: gpu.types.GPUTexture, srgb: bool) -> None:
+def draw_texture_quad(
+    corners: Quad, texture: gpu.types.GPUTexture, srgb: bool, opacity: float = 1.0
+) -> None:
     """Draw texture on quad; srgb decodes texels stored as sRGB bytes for the linear framebuffer."""
     quad = [corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]]
     uvs = [(0, 0), (1, 0), (1, 1), (0, 0), (1, 1), (0, 1)]
@@ -574,6 +579,7 @@ def draw_texture_quad(corners: Quad, texture: gpu.types.GPUTexture, srgb: bool) 
     batch = batch_for_shader(shader, "TRIS", {"pos": quad, "uv": uvs})
     shader.uniform_sampler("image", texture)
     shader.uniform_bool("srgb", [srgb])
+    shader.uniform_float("opacity", opacity)
     matrix = gpu.matrix.get_projection_matrix() @ gpu.matrix.get_model_view_matrix()
     shader.uniform_float("ModelViewProjectionMatrix", cast(Any, matrix))
     batch.draw(shader)

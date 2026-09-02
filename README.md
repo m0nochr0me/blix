@@ -124,6 +124,11 @@ _Edit Active Layer_ switches the editor to the layer image for painting; _Show C
 back and recomposites. Edits made straight on the composite canvas are synced into the active layer
 before the next recomposite.
 
+Three toggles under _Edit Active Layer_ help tell the active layer apart while painting on the
+composite: _Dim Below_ darkens the layers below, _Hatch Below_ draws diagonal hatching over them,
+and _Outline_ traces the active layer's painted pixels. All three follow the stroke in progress.
+Colors are set in the add-on preferences (_Layer Dim_, _Layer Hatch_, _Layer Outline_).
+
 ### Dither
 
 _Blix Dither Gradient_ drags a Bayer-thresholded ramp from the brush primary color — Ctrl snaps

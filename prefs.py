@@ -14,6 +14,9 @@ DEFAULTS: dict[str, RGBA] = {
     "ruler_background": (0.10, 0.10, 0.10, 0.92),
     "ruler_text": (0.70, 0.70, 0.70, 1.0),
     "mirror_color": (1.0, 0.35, 0.35, 0.6),
+    "dim_color": (0.0, 0.0, 0.0, 0.5),
+    "hatch_color": (0.0, 0.0, 0.0, 0.35),
+    "outline_color": (1.0, 0.75, 0.1, 1.0),
 }
 RULER_SIZE = 20
 
@@ -68,6 +71,9 @@ class BlixPreferences(bpy.types.AddonPreferences):
     ruler_background: _color_property("ruler_background", "Ruler Background")
     ruler_text: _color_property("ruler_text", "Ruler Text")
     mirror_color: _color_property("mirror_color", "Mirror Axis")
+    dim_color: _color_property("dim_color", "Layer Dim")
+    hatch_color: _color_property("hatch_color", "Layer Hatch")
+    outline_color: _color_property("outline_color", "Layer Outline")
     ruler_size: bpy.props.IntProperty(
         name="Ruler Size",
         description="Ruler band width in pixels, before UI scale",

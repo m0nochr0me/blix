@@ -16,6 +16,7 @@ PIXEL_GRID_ALPHA = 0.25
 _STEPS = (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
 
 ExtraDraw = Callable[[bpy.types.Region, bpy.types.Image], None]
+under_draws: list[ExtraDraw] = []
 extra_draws: list[ExtraDraw] = []
 
 _handler = None
@@ -231,6 +232,8 @@ def _draw() -> None:
     if image.size[0] == 0 or image.size[1] == 0:
         return
     gpu.state.blend_set("ALPHA")
+    for draw_fn in under_draws:
+        draw_fn(region, image)
     _draw_grid(region, image, scene)
     if props.show_guides(scene):
         _draw_guides(region, image)

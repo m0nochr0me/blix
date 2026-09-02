@@ -49,6 +49,18 @@ def show_pixel_grid(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_show_pixel_grid
 
 
+def layer_dim(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_layer_dim
+
+
+def layer_hatch(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_layer_hatch
+
+
+def layer_outline(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_layer_outline
+
+
 def grid_divisions(scene: bpy.types.Scene) -> int:
     return int(cast(Any, scene).blix_grid_divisions)
 
