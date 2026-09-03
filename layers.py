@@ -156,11 +156,21 @@ def _apply_history(canvas: bpy.types.Image, current: np.ndarray, step: int) -> b
     return True
 
 
+def layer_images(canvas: bpy.types.Image) -> Iterator[bpy.types.Image]:
+    """Every image a layer of the canvas owns: its current image and all of its cel slots."""
+    for layer in props.layers(canvas):
+        if layer.image is not None:
+            yield layer.image
+        for slot in layer.cels:
+            if slot.image is not None:
+                yield slot.image
+
+
 def _pack_layers(canvas: bpy.types.Image) -> None:
     """Refresh packed payloads so memfile undo restores current layer pixels, not stale ones."""
-    for layer in props.layers(canvas):
-        if layer.image is not None and layer.image.is_dirty:
-            layer.image.pack()
+    for image in layer_images(canvas):
+        if image.is_dirty:
+            image.pack()
 
 
 def _repair_stale_layers(canvas: bpy.types.Image) -> bool:
@@ -283,6 +293,11 @@ def _active_changed(self: bpy.types.Image, context: bpy.types.Context) -> None:
         editor.image = layer.image
 
 
+class BlixCelSlot(bpy.types.PropertyGroup):
+    number: bpy.props.IntProperty(name="Number", min=0)
+    image: bpy.props.PointerProperty(type=bpy.types.Image)
+
+
 class BlixLayer(bpy.types.PropertyGroup):
     number: bpy.props.IntProperty(name="Number", min=0)
     copy: bpy.props.IntProperty(name="Copy", min=0)
@@ -302,6 +317,7 @@ class BlixLayer(bpy.types.PropertyGroup):
     cel: bpy.props.BoolProperty(
         name="Cel", description="Treat this layer as an animation frame", default=True
     )
+    cels: bpy.props.CollectionProperty(type=BlixCelSlot)
 
 
 def layer_tag(layer: Any) -> str:
@@ -314,6 +330,34 @@ def layer_name(layer: Any) -> str:
     """Full layer name: tag, then -<label> when the layer has one."""
     tag = layer_tag(layer)
     return f"{tag}-{layer.label}" if layer.label else tag
+
+
+def slot_tag(slot: Any) -> str:
+    return f"F{slot.number:03d}"
+
+
+def current_slot(layer: Any) -> Any:
+    """Cel slot whose image the layer shows now; None for a layer without cels."""
+    return next((slot for slot in layer.cels if slot.image == layer.image), None)
+
+
+def next_slot_number(layer: Any) -> int:
+    return max((slot.number for slot in layer.cels), default=-1) + 1
+
+
+def add_slot(canvas: bpy.types.Image, layer: Any, pixels: np.ndarray | None) -> Any:
+    """Append a cel slot, blank or from pixels; the first call adopts the layer image as slot 0."""
+    if len(layer.cels) == 0:
+        first = layer.cels.add()
+        first.image = layer.image
+    slot = layer.cels.add()
+    slot.number = next_slot_number(layer)
+    name = f"{layer_tag(layer)}.{slot_tag(slot)}"
+    if pixels is None:
+        slot.image = _new_layer_image(canvas, name)
+    else:
+        slot.image = _clone_image(canvas, name, pixels)
+    return slot
 
 
 def active_layer(canvas: bpy.types.Image) -> Any:
@@ -401,6 +445,14 @@ def duplicate_layer(canvas: bpy.types.Image, index: int) -> None:
     layer.height = source.height
     layer.cel = source.cel
     layer.image = _clone_image(canvas, layer_name(layer), select.read_pixels(source.image))
+    for slot in source.cels:
+        clone = layer.cels.add()
+        clone.number = slot.number
+        if slot.image == source.image:
+            clone.image = layer.image
+            continue
+        name = f"{layer_tag(layer)}.{slot_tag(slot)}"
+        clone.image = _clone_image(canvas, name, select.read_pixels(slot.image))
     stack.move(len(stack) - 1, index)
     props.set_layers_index(canvas, index)
     composite(canvas)
@@ -426,9 +478,8 @@ def flatten(canvas: bpy.types.Image) -> None:
     select.write_pixels(canvas, pixels)
     _composite_cache[canvas.name] = select.read_pixels(canvas)
     stack = props.layers(canvas)
-    for layer in stack:
-        if layer.image is not None:
-            props.set_canvas_of(layer.image, None)
+    for image in layer_images(canvas):
+        props.set_canvas_of(image, None)
     stack.clear()
     layer = stack.add()
     layer.label = "Background"
@@ -633,9 +684,7 @@ def _pack_on_save(*_args: Any) -> None:
     for image in bpy.data.images:
         if len(props.layers(image)) == 0:
             continue
-        for layer in props.layers(image):
-            if layer.image is not None and layer.image.is_dirty:
-                layer.image.pack()
+        _pack_layers(image)
         if image.is_dirty:
             image.pack()
 
@@ -790,6 +839,9 @@ class BLIX_OT_layer_merge_down(_CanvasOperator):
         stack = props.layers(canvas)
         if not 0 <= index < len(stack) - 1:
             return False
+        if len(stack[index].cels) or len(stack[index + 1].cels):
+            cls.poll_message_set("Layers with cels cannot be merged")
+            return False
         return not stack[index].lock and not stack[index + 1].lock
 
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
@@ -879,6 +931,7 @@ class BLIX_OT_layer_toggle_above(_CanvasOperator):
 
 
 _classes = (
+    BlixCelSlot,
     BlixLayer,
     BLIX_OT_stroke_sync,
     BLIX_OT_layers_init,

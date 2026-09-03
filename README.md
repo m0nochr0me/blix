@@ -160,6 +160,15 @@ or end, steps to the previous or next cel change, and plays the scene. With _Fol
 scrubbing makes the cel shown at that frame the active layer, so painting always lands on the
 visible cel. The eye toggle and `H` still gate a layer on top of its track.
 
+A layer can also hold several cels of its own, so one layer shows different pixels per frame.
+_Add Cel_ starts a new blank cel for the active layer at the current frame (the layer's current
+image becomes cel `F000`); _Duplicate_ starts one from a copy of the shown cel; _Delete_ drops
+the cel shown at this frame. The _Cel_ field is the keyed cel index, stepped so no in-between cel
+ever shows, and the layer list tags a layer with its shown cel (`L001 F002`). _Insert Frame_ and
+_Remove Frame_ retime every key of the canvas after the current frame; cels that start inside
+removed frames are dropped. The dope sheet groups a layer's _Visible_ and _Cel_ channels under
+one name.
+
 _Export Animation_ writes the composite of every frame in the scene range, either as a horizontal
 strip (first frame left) or as a numbered PNG sequence. _Stop Animating_ removes the tracks and
 their keys.
@@ -197,6 +206,7 @@ binding (guide drag plus the tool keymaps) for rebinding.
 - Layer images are packed as PNG, so layer storage is 8 bit per channel.
 - Scrubbing recomposites the canvas without an undo step, and a stroke painted at a frame
   records the cel state first, so undo reverts strokes, not scrubs.
+- Layers with cels cannot be merged down; _Flatten_ bakes the current frame only.
 - Every pixel operation pushes one extra no-op image undo step; that bracket is what makes direct
   pixel writes revertible. Layer operations are single undo steps; a layer property edited in the
   panel costs one extra no-op step.

@@ -158,7 +158,11 @@ class BLIX_UL_layers(bpy.types.UIList):
         row = layout.row(align=True)
         tag = row.row(align=True)
         tag.alignment = "LEFT"
-        tag.label(text=layers.layer_tag(item))
+        slot = layers.current_slot(item)
+        tag_text = layers.layer_tag(item)
+        if slot is not None:
+            tag_text = f"{tag_text} {layers.slot_tag(slot)}"
+        tag.label(text=tag_text)
         row.prop(item, "label", text="", emboss=False)
         canvas = cast(bpy.types.Image, data)
         scene = context.scene if context is not None else None
@@ -267,6 +271,15 @@ class BLIX_PT_cels(bpy.types.Panel):
             col.use_property_split = True
             col.use_property_decorate = True
             col.prop(item, "visible")
+            col.prop(item, "cel")
+            row = layout.row(align=True)
+            cast(Any, row.operator("blix.slot_add", text="Add Cel")).duplicate = False
+            cast(Any, row.operator("blix.slot_add", text="Duplicate")).duplicate = True
+            row.operator("blix.slot_remove", text="Delete")
+        row = layout.row(align=True)
+        cast(Any, row.operator("blix.frames_insert")).count = 1
+        cast(Any, row.operator("blix.frames_remove")).count = 1
+        layout.label(text="Layers as Frames")
         row = layout.row(align=True)
         row.operator("blix.cels_layout")
         row.operator("blix.cel_insert")

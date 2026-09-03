@@ -9,7 +9,7 @@ import numpy as np
 from bpy.app.handlers import persistent
 from bpy_extras.io_utils import ExportHelper
 
-from . import overlay, props
+from . import overlay, props, select
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
@@ -53,11 +53,63 @@ def _channelbag(scene: bpy.types.Scene) -> Any:
     return cast(Any, action_layers[0].strips[0]).channelbag(data.action_slot)
 
 
-def _fcurve(scene: bpy.types.Scene, item: Any) -> bpy.types.FCurve | None:
+def _fcurve(scene: bpy.types.Scene, item: Any, name: str = "visible") -> Any:
     bag = _channelbag(scene)
     if bag is None:
         return None
-    return bag.fcurves.find(item.path_from_id("visible"))
+    return bag.fcurves.find(item.path_from_id(name))
+
+
+def _group(scene: bpy.types.Scene, item: Any, curve: Any) -> None:
+    """File the curve under a dope sheet group named after the track's layer."""
+    bag = _channelbag(scene)
+    curve.group = bag.groups.get(item.name) or bag.groups.new(item.name)
+
+
+def _rewrite(scene: bpy.types.Scene, item: Any, name: str, pairs: list[tuple[int, int]]) -> None:
+    """Replace the keys of one track property with (frame, value) pairs, stepped for cel indices."""
+    curve = _fcurve(scene, item, name)
+    if curve is not None:
+        _channelbag(scene).fcurves.remove(curve)
+    if not pairs:
+        return
+    path = item.path_from_id(name)
+    for frame, value in pairs:
+        setattr(item, name, value)
+        scene.keyframe_insert(path, frame=frame)
+    curve = _fcurve(scene, item, name)
+    if name == "cel":
+        for point in curve.keyframe_points:
+            point.interpolation = "CONSTANT"
+        curve.update()
+    _group(scene, item, curve)
+    setattr(item, name, round(curve.evaluate(scene.frame_current)))
+
+
+def _pairs(curve: Any) -> list[tuple[int, int]]:
+    return [(round(point.co.x), round(point.co.y)) for point in curve.keyframe_points]
+
+
+def _write_cel_key(scene: bpy.types.Scene, item: Any, frame: int, index: int) -> None:
+    curve = _fcurve(scene, item, "cel")
+    pairs = [] if curve is None else [pair for pair in _pairs(curve) if pair[0] != frame]
+    _rewrite(scene, item, "cel", [*pairs, (frame, index)])
+
+
+def slot_at(scene: bpy.types.Scene, canvas: bpy.types.Image, layer: Any, frame: int) -> int | None:
+    """Index of the cel slot the layer shows at frame; None for a layer without cels."""
+    count = len(layer.cels)
+    if count == 0:
+        return None
+    item = track(scene, canvas, layer)
+    if item is None:
+        from . import layers
+
+        slot = layers.current_slot(layer)
+        return 0 if slot is None else list(layer.cels).index(slot)
+    curve = _fcurve(scene, item, "cel")
+    value = item.cel if curve is None else round(curve.evaluate(frame))
+    return min(max(int(value), 0), count - 1)
 
 
 def _add_track(scene: bpy.types.Scene, canvas: bpy.types.Image, layer: Any) -> Any:
@@ -162,6 +214,8 @@ def _write_ranges(scene: bpy.types.Scene, item: Any, found: list[Range]) -> None
         for frame, value in ((first - 1, False), (first, True), (last + 1, False)):
             item.visible = value
             scene.keyframe_insert(path, frame=frame)
+    if merged:
+        _group(scene, item, _fcurve(scene, item))
     item.visible = any(first <= scene.frame_current <= last for first, last in merged)
 
 
@@ -192,19 +246,28 @@ def boundaries(scene: bpy.types.Scene, canvas: bpy.types.Image) -> list[int]:
     return sorted(frames)
 
 
-def _shift(scene: bpy.types.Scene, canvas: bpy.types.Image, after: int, delta: int) -> None:
-    """Move keys past `after` by delta; off keys at after+1 stay so cels ending there keep it."""
+def _curves(scene: bpy.types.Scene, canvas: bpy.types.Image) -> list[tuple[Any, Any]]:
+    """(track, curve) pairs for every keyed property of the canvas's tracks."""
     bag = _channelbag(scene)
     if bag is None:
-        return
+        return []
+    found: list[tuple[Any, Any]] = []
     for index, item in enumerate(props.cels(scene)):
         if item.canvas != canvas:
             continue
-        curve = bag.fcurves.find(f"blix_cels[{index}].visible")
-        if curve is None:
-            continue
+        prefix = f"blix_cels[{index}]."
+        found += [(item, curve) for curve in bag.fcurves if curve.data_path.startswith(prefix)]
+    return found
+
+
+def _shift(
+    scene: bpy.types.Scene, canvas: bpy.types.Image, after: int, delta: int, keep_end: bool = False
+) -> None:
+    """Move keys past `after` by delta; keep_end leaves off keys at after+1 so cels end there."""
+    for _item, curve in _curves(scene, canvas):
+        visible = curve.data_path.endswith(".visible")
         for point in curve.keyframe_points:
-            ends_here = point.co.x == after + 1 and point.co.y < 0.5
+            ends_here = keep_end and visible and point.co.x == after + 1 and point.co.y < 0.5
             if point.co.x > after and not ends_here:
                 point.co.x += delta
                 point.handle_left.x += delta
@@ -212,7 +275,51 @@ def _shift(scene: bpy.types.Scene, canvas: bpy.types.Image, after: int, delta: i
         curve.update()
 
 
-def _retarget_editors(canvas: bpy.types.Image, image: bpy.types.Image) -> None:
+def _drop_frames(scene: bpy.types.Scene, canvas: bpy.types.Image, after: int, count: int) -> None:
+    """Delete keys inside (after, after+count] and pull the later keys back by count."""
+    for item, curve in _curves(scene, canvas):
+        name = curve.data_path.rsplit(".", 1)[1]
+        kept = [
+            (frame, value) for frame, value in _pairs(curve) if not after < frame <= after + count
+        ]
+        _rewrite(
+            scene,
+            item,
+            name,
+            [(frame - count if frame > after else frame, value) for frame, value in kept],
+        )
+
+
+def _sanitize(scene: bpy.types.Scene, canvas: bpy.types.Image) -> None:
+    """Step every cel-index key so hand-inserted keys never show in-between cels."""
+    for _item, curve in _curves(scene, canvas):
+        if not curve.data_path.endswith(".cel"):
+            continue
+        soft = [point for point in curve.keyframe_points if point.interpolation != "CONSTANT"]
+        for point in soft:
+            point.interpolation = "CONSTANT"
+        if soft:
+            curve.update()
+
+
+def _swap_slots(scene: bpy.types.Scene, canvas: bpy.types.Image) -> None:
+    """Point every layer with cels at the slot keyed for the current frame."""
+    for layer in props.layers(canvas):
+        index = slot_at(scene, canvas, layer, scene.frame_current)
+        if index is None:
+            continue
+        target = layer.cels[index].image
+        if target is None or target == layer.image:
+            continue
+        previous = layer.image
+        layer.image = target
+        _retarget_editors(canvas, target, previous)
+
+
+def _retarget_editors(
+    canvas: bpy.types.Image, image: bpy.types.Image, previous: bpy.types.Image | None = None
+) -> None:
+    """Point image editors showing previous (or any layer image of canvas) at image."""
     for manager in bpy.data.window_managers:
         for window in manager.windows:
             for area in window.screen.areas:
@@ -221,6 +328,8 @@ def _retarget_editors(canvas: bpy.types.Image, image: bpy.types.Image) -> None:
                 space = cast(bpy.types.SpaceImageEditor, area.spaces.active)
                 shown = space.image
                 if shown is None or shown in (canvas, image):
+                    continue
+                if previous is not None and shown != previous:
                     continue
                 if props.canvas_of(shown) == canvas:
                     space.image = image
@@ -249,6 +358,7 @@ def _apply(scene: bpy.types.Scene, canvas: bpy.types.Image) -> None:
     from . import layers
 
     layers.sync_canvas(canvas)
+    _swap_slots(scene, canvas)
     if props.cel_follow(scene):
         _follow(canvas)
     layers._heal(canvas)
@@ -261,6 +371,7 @@ def refresh(scene: bpy.types.Scene) -> None:
     }
     for canvas in canvases.values():
         if len(props.layers(canvas)):
+            _sanitize(scene, canvas)
             _apply(scene, canvas)
     if canvases:
         overlay.tag_redraw(bpy.context)
@@ -271,7 +382,7 @@ def _frame_changed(scene: bpy.types.Scene, *_args: Any) -> None:
     refresh(scene)
 
 
-def _visible_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
+def _track_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
     scene = cast(bpy.types.Scene, self.id_data)
     canvas = cast(Any, self).canvas
     if canvas is not None and len(props.layers(canvas)):
@@ -315,7 +426,13 @@ class BlixCel(bpy.types.PropertyGroup):
     canvas: bpy.props.PointerProperty(type=bpy.types.Image)
     number: bpy.props.IntProperty(name="Number", min=0)
     copy: bpy.props.IntProperty(name="Copy", min=0)
-    visible: bpy.props.BoolProperty(name="Visible", default=True, update=_visible_changed)
+    visible: bpy.props.BoolProperty(name="Visible", default=True, update=_track_changed)
+    cel: bpy.props.IntProperty(
+        name="Cel",
+        description="Cel slot the layer shows at this frame",
+        min=0,
+        update=_track_changed,
+    )
     frame_start: bpy.props.IntProperty(
         name="Start",
         description="First frame the layer is shown on",
@@ -460,11 +577,140 @@ class BLIX_OT_cel_insert(_CelOperator):
         with layers._undo_step(context, canvas, "Blix Insert Cel"):
             layers.add_layer(canvas, layers.next_layer_number(canvas))
             sync(scene, canvas)
-            _shift(scene, canvas, last, hold)
+            _shift(scene, canvas, last, hold, keep_end=True)
             added = track(scene, canvas, layers.active_layer(canvas))
             set_range(scene, added, last + 1, last + hold)
             scene.frame_end += hold
         scene.frame_set(last + 1)
+        return {"FINISHED"}
+
+
+class _SlotOperator(_CelOperator):
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        from . import layers
+
+        if not super().poll(context):
+            return False
+        canvas = layers.resolve_canvas(context)
+        scene = context.scene
+        assert canvas is not None and scene is not None
+        layer = layers.active_layer(canvas)
+        if layer is None or layer.image is None or track(scene, canvas, layer) is None:
+            return False
+        return cls.slots_ok(len(layer.cels))
+
+    @classmethod
+    def slots_ok(cls, count: int) -> bool:
+        return True
+
+
+class BLIX_OT_slot_add(_SlotOperator):
+    """Start a new cel for the active layer at the current frame, blank or copied"""
+
+    bl_idname = "blix.slot_add"
+    bl_label = "Add Cel"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    duplicate: bpy.props.BoolProperty(default=False)
+
+    def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
+        from . import layers
+
+        canvas = layers.resolve_canvas(context)
+        scene = context.scene
+        assert canvas is not None and scene is not None
+        layer = layers.active_layer(canvas)
+        item = track(scene, canvas, layer)
+        with layers._undo_step(context, canvas, "Blix Add Cel"):
+            fresh = len(layer.cels) == 0
+            pixels = select.read_pixels(layer.image) if self.duplicate else None
+            layers.add_slot(canvas, layer, pixels)
+            if fresh:
+                _write_cel_key(scene, item, min(scene.frame_start, scene.frame_current - 1), 0)
+            _write_cel_key(scene, item, scene.frame_current, len(layer.cels) - 1)
+        refresh(scene)
+        return {"FINISHED"}
+
+
+class BLIX_OT_slot_remove(_SlotOperator):
+    """Delete the cel the active layer shows at the current frame"""
+
+    bl_idname = "blix.slot_remove"
+    bl_label = "Delete Cel"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    @classmethod
+    def slots_ok(cls, count: int) -> bool:
+        return count > 1
+
+    def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
+        from . import layers
+
+        canvas = layers.resolve_canvas(context)
+        scene = context.scene
+        assert canvas is not None and scene is not None
+        layer = layers.active_layer(canvas)
+        item = track(scene, canvas, layer)
+        index = slot_at(scene, canvas, layer, scene.frame_current)
+        assert index is not None
+        with layers._undo_step(context, canvas, "Blix Delete Cel"):
+            curve = _fcurve(scene, item, "cel")
+            if curve is not None:
+                kept = [(frame, value) for frame, value in _pairs(curve) if value != index]
+                _rewrite(
+                    scene,
+                    item,
+                    "cel",
+                    [(frame, value - 1 if value > index else value) for frame, value in kept],
+                )
+            removed = layer.cels[index].image
+            layer.cels.remove(index)
+            if layer.image == removed:
+                layer.image = layer.cels[min(index, len(layer.cels) - 1)].image
+        refresh(scene)
+        return {"FINISHED"}
+
+
+class BLIX_OT_frames_insert(_CelOperator):
+    """Insert frames after the current one, shifting every later key of this canvas"""
+
+    bl_idname = "blix.frames_insert"
+    bl_label = "Insert Frame"
+    bl_options = {"REGISTER", "UNDO"}
+
+    count: bpy.props.IntProperty(name="Frames", default=1, min=1)
+
+    def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
+        from . import layers
+
+        canvas = layers.resolve_canvas(context)
+        scene = context.scene
+        assert canvas is not None and scene is not None
+        _shift(scene, canvas, scene.frame_current, self.count)
+        scene.frame_end += self.count
+        refresh(scene)
+        return {"FINISHED"}
+
+
+class BLIX_OT_frames_remove(_CelOperator):
+    """Remove frames after the current one; cels starting inside them are dropped"""
+
+    bl_idname = "blix.frames_remove"
+    bl_label = "Remove Frame"
+    bl_options = {"REGISTER", "UNDO"}
+
+    count: bpy.props.IntProperty(name="Frames", default=1, min=1)
+
+    def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
+        from . import layers
+
+        canvas = layers.resolve_canvas(context)
+        scene = context.scene
+        assert canvas is not None and scene is not None
+        _drop_frames(scene, canvas, scene.frame_current, self.count)
+        scene.frame_end = max(scene.frame_end - self.count, scene.frame_start)
+        refresh(scene)
         return {"FINISHED"}
 
 
@@ -553,6 +799,10 @@ _classes = (
     BLIX_OT_cels_disable,
     BLIX_OT_cels_layout,
     BLIX_OT_cel_insert,
+    BLIX_OT_slot_add,
+    BLIX_OT_slot_remove,
+    BLIX_OT_frames_insert,
+    BLIX_OT_frames_remove,
     BLIX_OT_cel_jump,
     BLIX_OT_cels_export,
 )
