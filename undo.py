@@ -8,6 +8,7 @@ import numpy as np
 SETTLE = 0.2
 
 _pending: set[str] = set()
+_stale: set[str] = set()
 
 
 def record(
@@ -17,6 +18,7 @@ def record(
     from . import layers
 
     _pending.discard(image.name)
+    _stale.discard(image.name)
     if len(layers.props.layers(image)):
         layers.sync_canvas(image, written)
     layers.push_history(image)
@@ -27,9 +29,24 @@ def record(
 def defer(image: bpy.types.Image) -> None:
     """Record once writes settle, so a slider-driven burst of recomposites pushes one step."""
     _pending.add(image.name)
+    _stale.add(image.name)
     if bpy.app.timers.is_registered(_flush):
         bpy.app.timers.unregister(_flush)
     bpy.app.timers.register(_flush, first_interval=SETTLE)
+
+
+def forget(image: bpy.types.Image) -> None:
+    """Drop a pending deferred record; the caller pushes its own undo step instead."""
+    _pending.discard(image.name)
+
+
+def mark(image: bpy.types.Image) -> None:
+    """Flag pixels written with no image step, so the next native stroke records first."""
+    _stale.add(image.name)
+
+
+def stale(image: bpy.types.Image) -> bool:
+    return image.name in _stale
 
 
 def _flush() -> float | None:
@@ -46,9 +63,11 @@ def _flush() -> float | None:
 
 def register() -> None:
     _pending.clear()
+    _stale.clear()
 
 
 def unregister() -> None:
     if bpy.app.timers.is_registered(_flush):
         bpy.app.timers.unregister(_flush)
     _pending.clear()
+    _stale.clear()

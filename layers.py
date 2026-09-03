@@ -239,6 +239,18 @@ def composite(canvas: bpy.types.Image) -> None:
     push_history(canvas)
 
 
+def _heal(canvas: bpy.types.Image) -> bool:
+    """Recomposite after undo moved layer state the canvas no longer matches; pushes no step."""
+    pixels = composite_pixels(canvas)
+    current = select.read_pixels(canvas)
+    if np.array_equal(np.rint(pixels * 255.0), np.rint(current * 255.0)):
+        return False
+    select.write_pixels(canvas, pixels)
+    _composite_cache[canvas.name] = select.read_pixels(canvas)
+    undo.mark(canvas)
+    return True
+
+
 def _layer_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
     canvas = cast(bpy.types.Image, self.id_data)
     if len(props.layers(canvas)):
@@ -509,6 +521,8 @@ def watch_stroke(
     global _stroke_canvas, _stand_in, _fill_mask
     if len(props.layers(image)) == 0:
         return
+    if undo.stale(image):
+        undo.record(context, image)
     if image.name not in _composite_cache:
         _composite_cache[image.name] = select.read_pixels(image)
     _stroke_canvas = image.name
@@ -594,10 +608,13 @@ def _refresh_cache(step: int) -> None:
         pixels = select.read_pixels(image)
         if _apply_history(image, pixels, step):
             restored = True
-            continue
-        if _repair_stale_layers(image):
+        elif _repair_stale_layers(image):
             restored = True
-        _composite_cache[image.name] = pixels
+            _composite_cache[image.name] = pixels
+        else:
+            _composite_cache[image.name] = pixels
+        if _heal(image):
+            restored = True
     if restored:
         overlay.tag_redraw(bpy.context)
 
@@ -618,12 +635,19 @@ def _pack_on_save(*_args: Any) -> None:
 def _undo_step(
     context: bpy.types.Context, canvas: bpy.types.Image, message: str | None = None
 ) -> Iterator[None]:
-    undo.record(context, canvas)
+    if message is None:
+        undo.record(context, canvas)
+        yield
+        undo.record(context, canvas)
+        return
+    sync_canvas(canvas)
+    push_history(canvas)
     yield
-    undo.record(context, canvas)
-    if message is not None:
-        _pack_layers(canvas)
-        cast(Any, bpy.ops.ed).undo_push(message=message)
+    push_history(canvas)
+    undo.forget(canvas)
+    undo.mark(canvas)
+    _pack_layers(canvas)
+    cast(Any, bpy.ops.ed).undo_push(message=message)
 
 
 class _CanvasOperator(bpy.types.Operator):

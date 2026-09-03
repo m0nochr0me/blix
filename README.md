@@ -171,9 +171,8 @@ binding (guide drag plus the tool keymaps) for rebinding.
   restores them. The dither gradient is not mirrored; it already fills its whole target region.
 - Layer images are packed as PNG, so layer storage is 8 bit per channel.
 - Every pixel operation pushes one extra no-op image undo step; that bracket is what makes direct
-  pixel writes revertible.
-- Painting within 0.2 s of a layer property change can bake the stale composite into that stroke's
-  undo state.
+  pixel writes revertible. Layer operations are single undo steps; a layer property edited in the
+  panel costs one extra no-op step.
 
 ## License
 
