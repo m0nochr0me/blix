@@ -152,10 +152,13 @@ A filled diamond in the layer list marks a layer as a cel; untick it for static 
 the background. _Layout Cels_ gives every cel a consecutive range (start frame, frames per cel,
 bottom layer first unless _Top Layer First_) and fits the scene frame range to them. _Insert Cel_
 adds a new layer after the active cel with the same length, shifts the later cels, and jumps to
-it. The _Start_ and _End_ fields edit the active layer's first range; _Visible_ is the keyed
-value at the current frame, so `I`, right-click _Insert Keyframe_ and auto-keying all work on it.
-With _Follow Frame_ on, scrubbing makes the cel shown at that frame the active layer, so painting
-always lands on the visible cel. The eye toggle and `H` still gate a layer on top of its track.
+it. The _Start_ and _End_ fields edit the active layer's range at the current frame (the next
+range when the layer is off there), so one cel can show up in several ranges; keys in the dope
+sheet are the same data. _Visible_ is the keyed value at the current frame, so `I`, right-click
+_Insert Keyframe_ and auto-keying all work on it. The transport row jumps to the scene start
+or end, steps to the previous or next cel change, and plays the scene. With _Follow Frame_ on,
+scrubbing makes the cel shown at that frame the active layer, so painting always lands on the
+visible cel. The eye toggle and `H` still gate a layer on top of its track.
 
 _Export Animation_ writes the composite of every frame in the scene range, either as a horizontal
 strip (first frame left) or as a numbered PNG sequence. _Stop Animating_ removes the tracks and
@@ -192,10 +195,8 @@ binding (guide drag plus the tool keymaps) for rebinding.
   strokes works the same way — pixels outside the mask flash painted for a frame before the watch
   restores them. The dither gradient is not mirrored; it already fills its whole target region.
 - Layer images are packed as PNG, so layer storage is 8 bit per channel.
-- The _Start_ and _End_ fields cover a layer's first on-range only; give a cel several ranges
-  by editing its keys in the dope sheet. Scrubbing recomposites the canvas without an undo step,
-  and a stroke painted at a frame records the cel state first, so undo reverts strokes, not
-  scrubs.
+- Scrubbing recomposites the canvas without an undo step, and a stroke painted at a frame
+  records the cel state first, so undo reverts strokes, not scrubs.
 - Every pixel operation pushes one extra no-op image undo step; that bracket is what makes direct
   pixel writes revertible. Layer operations are single undo steps; a layer property edited in the
   panel costs one extra no-op step.

@@ -248,6 +248,14 @@ class BLIX_PT_cels(bpy.types.Panel):
             layout.operator("blix.cels_enable", icon="PLAY")
             return
         layout.prop(scene, "frame_current")
+        row = layout.row(align=True)
+        cast(Any, row.operator("screen.frame_jump", text="", icon="REW")).end = False
+        cast(Any, row.operator("blix.cel_jump", text="", icon="PREV_KEYFRAME")).forward = False
+        screen = context.screen
+        playing = screen is not None and screen.is_animation_playing
+        row.operator("screen.animation_play", text="", icon="PAUSE" if playing else "PLAY")
+        cast(Any, row.operator("blix.cel_jump", text="", icon="NEXT_KEYFRAME")).forward = True
+        cast(Any, row.operator("screen.frame_jump", text="", icon="FF")).end = True
         layout.prop(scene, "blix_cel_follow", toggle=True)
         layer = layers.active_layer(canvas)
         item = cels.track(scene, canvas, layer) if layer is not None else None

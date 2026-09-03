@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
 
 _PATH = re.compile(r"blix_cels\[(\d+)\](.*)")
+Range = tuple[int, int]
 
 MODE_ITEMS = (
     ("STRIP", "Strip", "All frames side by side in one image, first frame left"),
@@ -113,31 +114,82 @@ def disable(scene: bpy.types.Scene, canvas: bpy.types.Image) -> None:
             _remove_track(scene, index)
 
 
-def frame_range(scene: bpy.types.Scene, item: Any) -> tuple[int, int]:
-    """First keyed on-range of the track; the scene range when unkeyed."""
+def ranges(scene: bpy.types.Scene, item: Any) -> list[Range]:
+    """On-ranges keyed on the track in frame order; empty when unkeyed or never on."""
     curve = _fcurve(scene, item)
     if curve is None:
+        return []
+    found: list[Range] = []
+    first: int | None = None
+    for point in curve.keyframe_points:
+        frame = round(point.co.x)
+        if point.co.y >= 0.5:
+            first = frame if first is None else first
+        elif first is not None:
+            found.append((first, frame - 1))
+            first = None
+    if first is not None:
+        found.append((first, scene.frame_end))
+    return found
+
+
+def range_at(scene: bpy.types.Scene, item: Any, frame: int) -> Range:
+    """Range containing frame, else the next one after it, else the last one before it."""
+    if _fcurve(scene, item) is None:
         return scene.frame_start, scene.frame_end
-    points = curve.keyframe_points
-    for index, point in enumerate(points):
-        if point.co.y < 0.5:
-            continue
-        first = round(point.co.x)
-        later = [round(other.co.x) for other in points[index + 1 :] if other.co.y < 0.5]
-        return first, later[0] - 1 if later else scene.frame_end
-    return scene.frame_start, scene.frame_start - 1
+    found = ranges(scene, item)
+    if not found:
+        return scene.frame_start, scene.frame_start - 1
+    for first, last in found:
+        if frame <= last:
+            return first, last
+    return found[-1]
 
 
-def set_range(scene: bpy.types.Scene, item: Any, first: int, last: int) -> None:
-    """Key the track on from first to last inclusive and off around it, replacing old keys."""
+def _write_ranges(scene: bpy.types.Scene, item: Any, found: list[Range]) -> None:
+    """Replace the track's keys with an off/on/off triple per range, merging touching ones."""
     curve = _fcurve(scene, item)
     if curve is not None:
         _channelbag(scene).fcurves.remove(curve)
+    merged: list[Range] = []
+    for first, last in sorted(found):
+        if merged and first <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], last))
+        else:
+            merged.append((first, last))
     path = item.path_from_id("visible")
-    for frame, value in ((first - 1, False), (first, True), (last + 1, False)):
-        item.visible = value
-        scene.keyframe_insert(path, frame=frame)
-    item.visible = first <= scene.frame_current <= last
+    for first, last in merged:
+        for frame, value in ((first - 1, False), (first, True), (last + 1, False)):
+            item.visible = value
+            scene.keyframe_insert(path, frame=frame)
+    item.visible = any(first <= scene.frame_current <= last for first, last in merged)
+
+
+def set_range(scene: bpy.types.Scene, item: Any, first: int, last: int) -> None:
+    """Key the track on from first to last inclusive and off elsewhere."""
+    _write_ranges(scene, item, [(first, last)])
+
+
+def boundaries(scene: bpy.types.Scene, canvas: bpy.types.Image) -> list[int]:
+    """Frames where any track of the canvas changes value, sorted."""
+    bag = _channelbag(scene)
+    if bag is None:
+        return []
+    frames: set[int] = set()
+    for index, item in enumerate(props.cels(scene)):
+        if item.canvas != canvas:
+            continue
+        prefix = f"blix_cels[{index}]."
+        for curve in bag.fcurves:
+            if not curve.data_path.startswith(prefix):
+                continue
+            previous: int | None = None
+            for point in curve.keyframe_points:
+                value = round(point.co.y)
+                if previous is not None and value != previous:
+                    frames.add(round(point.co.x))
+                previous = value
+    return sorted(frames)
 
 
 def _shift(scene: bpy.types.Scene, canvas: bpy.types.Image, after: int, delta: int) -> None:
@@ -227,26 +279,36 @@ def _visible_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) 
         overlay.tag_redraw(context)
 
 
+def _current_range(self: bpy.types.PropertyGroup) -> Range:
+    scene = cast(bpy.types.Scene, self.id_data)
+    return range_at(scene, self, scene.frame_current)
+
+
+def _replace_range(self: bpy.types.PropertyGroup, edited: Range) -> None:
+    """Swap the range at the current frame for edited, keeping the track's other ranges."""
+    scene = cast(bpy.types.Scene, self.id_data)
+    current = _current_range(self)
+    others = [found for found in ranges(scene, self) if found != current]
+    _write_ranges(scene, self, [*others, edited])
+    refresh(scene)
+
+
 def _get_start(self: bpy.types.PropertyGroup) -> int:
-    return frame_range(cast(bpy.types.Scene, self.id_data), self)[0]
+    return _current_range(self)[0]
 
 
 def _set_start(self: bpy.types.PropertyGroup, value: int) -> None:
-    scene = cast(bpy.types.Scene, self.id_data)
-    _first, last = frame_range(scene, self)
-    set_range(scene, self, value, max(last, value))
-    refresh(scene)
+    _first, last = _current_range(self)
+    _replace_range(self, (value, max(last, value)))
 
 
 def _get_end(self: bpy.types.PropertyGroup) -> int:
-    return frame_range(cast(bpy.types.Scene, self.id_data), self)[1]
+    return _current_range(self)[1]
 
 
 def _set_end(self: bpy.types.PropertyGroup, value: int) -> None:
-    scene = cast(bpy.types.Scene, self.id_data)
-    first, _last = frame_range(scene, self)
-    set_range(scene, self, min(first, value), value)
-    refresh(scene)
+    first, _last = _current_range(self)
+    _replace_range(self, (min(first, value), value))
 
 
 class BlixCel(bpy.types.PropertyGroup):
@@ -393,7 +455,7 @@ class BLIX_OT_cel_insert(_CelOperator):
         scene = context.scene
         assert canvas is not None and scene is not None
         layer = layers.active_layer(canvas)
-        first, last = frame_range(scene, track(scene, canvas, layer))
+        first, last = range_at(scene, track(scene, canvas, layer), scene.frame_current)
         hold = max(last - first + 1, 1)
         with layers._undo_step(context, canvas, "Blix Insert Cel"):
             layers.add_layer(canvas, layers.next_layer_number(canvas))
@@ -403,6 +465,32 @@ class BLIX_OT_cel_insert(_CelOperator):
             set_range(scene, added, last + 1, last + hold)
             scene.frame_end += hold
         scene.frame_set(last + 1)
+        return {"FINISHED"}
+
+
+class BLIX_OT_cel_jump(_CelOperator):
+    """Jump to the previous or next frame where a cel changes"""
+
+    bl_idname = "blix.cel_jump"
+    bl_label = "Jump to Cel"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    forward: bpy.props.BoolProperty(default=True)
+
+    def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
+        from . import layers
+
+        canvas = layers.resolve_canvas(context)
+        scene = context.scene
+        assert canvas is not None and scene is not None
+        frame = scene.frame_current
+        found = boundaries(scene, canvas)
+        targets = (
+            [f for f in found if f > frame] if self.forward else [f for f in found if f < frame]
+        )
+        if not targets:
+            return {"CANCELLED"}
+        scene.frame_set(targets[0] if self.forward else targets[-1])
         return {"FINISHED"}
 
 
@@ -465,6 +553,7 @@ _classes = (
     BLIX_OT_cels_disable,
     BLIX_OT_cels_layout,
     BLIX_OT_cel_insert,
+    BLIX_OT_cel_jump,
     BLIX_OT_cels_export,
 )
 
