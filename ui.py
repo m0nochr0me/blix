@@ -261,6 +261,12 @@ class BLIX_PT_cels(bpy.types.Panel):
         cast(Any, row.operator("blix.cel_jump", text="", icon="NEXT_KEYFRAME")).forward = True
         cast(Any, row.operator("screen.frame_jump", text="", icon="FF")).end = True
         layout.prop(scene, "blix_cel_follow", toggle=True)
+        layout.prop(scene, "blix_onion", toggle=True)
+        col = layout.column(align=True)
+        col.active = props.onion(scene)
+        col.prop(scene, "blix_onion_before")
+        col.prop(scene, "blix_onion_after")
+        col.prop(scene, "blix_onion_opacity", slider=True)
         layer = layers.active_layer(canvas)
         item = cels.track(scene, canvas, layer) if layer is not None else None
         if item is not None:

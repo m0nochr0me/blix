@@ -457,6 +457,7 @@ def _get_preview_shader() -> gpu.types.GPUShader:
     info.push_constant("MAT4", "ModelViewProjectionMatrix")
     info.push_constant("BOOL", "srgb")
     info.push_constant("FLOAT", "opacity")
+    info.push_constant("VEC4", "tint")
     info.fragment_out(0, "VEC4", "fragColor")
     info.vertex_source(
         "void main()"
@@ -471,7 +472,8 @@ def _get_preview_shader() -> gpu.types.GPUShader:
         "vec4 color = texelFetch(image, texel, 0);"
         "if (color.a <= 0.0) discard;"
         "color.a *= opacity;"
-        "fragColor = srgb ? vec4(srgb_to_linear(color.rgb), color.a) : color;}"
+        "vec3 rgb = srgb ? srgb_to_linear(color.rgb) : color.rgb;"
+        "fragColor = vec4(mix(rgb, tint.rgb, tint.a), color.a);}"
     )
     _preview_shader = gpu.shader.create_from_info(info)
     return _preview_shader
@@ -625,10 +627,17 @@ def _select_tool_active(context: bpy.types.Context) -> bool:
     return tool is not None and tool.idname in _SELECT_TOOLS
 
 
+NO_TINT = (1.0, 1.0, 1.0, 0.0)
+
+
 def draw_texture_quad(
-    corners: Quad, texture: gpu.types.GPUTexture, srgb: bool, opacity: float = 1.0
+    corners: Quad,
+    texture: gpu.types.GPUTexture,
+    srgb: bool,
+    opacity: float = 1.0,
+    tint: tuple[float, float, float, float] = NO_TINT,
 ) -> None:
-    """Draw texture on quad; srgb decodes texels stored as sRGB bytes for the linear framebuffer."""
+    """Draw texture on quad; srgb decodes sRGB-byte texels, tint mixes rgb toward it by alpha."""
     quad = [corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]]
     uvs = [(0, 0), (1, 0), (1, 1), (0, 0), (1, 1), (0, 1)]
     shader = _get_preview_shader()
@@ -636,6 +645,7 @@ def draw_texture_quad(
     shader.uniform_sampler("image", texture)
     shader.uniform_bool("srgb", [srgb])
     shader.uniform_float("opacity", opacity)
+    shader.uniform_float("tint", tint)
     matrix = gpu.matrix.get_projection_matrix() @ gpu.matrix.get_model_view_matrix()
     shader.uniform_float("ModelViewProjectionMatrix", cast(Any, matrix))
     batch.draw(shader)

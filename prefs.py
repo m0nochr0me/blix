@@ -17,6 +17,8 @@ DEFAULTS: dict[str, RGBA] = {
     "dim_color": (0.0, 0.0, 0.0, 0.5),
     "hatch_color": (0.0, 0.0, 0.0, 0.35),
     "outline_color": (1.0, 0.75, 0.1, 1.0),
+    "onion_prev_color": (1.0, 0.3, 0.3, 0.6),
+    "onion_next_color": (0.3, 1.0, 0.3, 0.6),
 }
 RULER_SIZE = 20
 
@@ -74,6 +76,8 @@ class BlixPreferences(bpy.types.AddonPreferences):
     dim_color: _color_property("dim_color", "Layer Dim")
     hatch_color: _color_property("hatch_color", "Layer Hatch")
     outline_color: _color_property("outline_color", "Layer Outline")
+    onion_prev_color: _color_property("onion_prev_color", "Onion Previous")
+    onion_next_color: _color_property("onion_next_color", "Onion Next")
     ruler_size: bpy.props.IntProperty(
         name="Ruler Size",
         description="Ruler band width in pixels, before UI scale",

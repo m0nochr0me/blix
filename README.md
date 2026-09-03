@@ -169,6 +169,11 @@ _Remove Frame_ retime every key of the canvas after the current frame; cels that
 removed frames are dropped. The dope sheet groups a layer's _Visible_ and _Cel_ channels under
 one name.
 
+_Onion Skin_ ghosts the cels before and after the current one over the canvas, tinted (previous
+red, next green by default; both colors live in the add-on preferences) and fading with
+distance. _Before_ and _After_ count cel changes rather than frames, so a held cel is one step.
+Ghosts are overlay only; export and the stack preview ignore them.
+
 _Export Animation_ writes the composite of every frame in the scene range, either as a horizontal
 strip (first frame left) or as a numbered PNG sequence. _Stop Animating_ removes the tracks and
 their keys.

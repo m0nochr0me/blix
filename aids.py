@@ -7,7 +7,7 @@ import bpy
 import gpu
 import numpy as np
 
-from . import layers, overlay, prefs, props, select
+from . import cels, layers, overlay, prefs, props, select
 
 HATCH_SPACING = 8.0
 
@@ -52,6 +52,29 @@ def _draw_layers(
         select.draw_texture_quad(corners, texture, False, upper.opacity)
 
 
+def _draw_ghosts(scene: bpy.types.Scene, canvas: bpy.types.Image, corners: select.Quad) -> None:
+    """Draw the cels before and after the current one, tinted and fading with distance."""
+    frame = scene.frame_current
+    earlier, later = cels.ghost_frames(
+        scene, canvas, frame, props.onion_before(scene), props.onion_after(scene)
+    )
+    opacity = props.onion_opacity(scene)
+    stack = [layer for layer in props.layers(canvas) if layer.cel]
+    ghosts = (
+        (earlier, prefs.color("onion_prev_color")),
+        (later, prefs.color("onion_next_color")),
+    )
+    for frames, tint in ghosts:
+        for step, ghost_frame in enumerate(frames):
+            for layer in stack:
+                image = cels.state_at(scene, canvas, layer, ghost_frame)
+                now = layer.image if layers.shown(canvas, layer) else None
+                if image is None or image == now or tuple(image.size) != tuple(canvas.size):
+                    continue
+                texture = gpu.texture.from_image(image)
+                select.draw_texture_quad(corners, texture, False, opacity / (step + 1), tint)
+
+
 def _draw(region: bpy.types.Region, image: bpy.types.Image) -> None:
     scene = bpy.context.scene
     if scene is None or len(props.layers(image)) == 0:
@@ -59,7 +82,8 @@ def _draw(region: bpy.types.Region, image: bpy.types.Image) -> None:
     dim = props.layer_dim(scene)
     hatch = props.layer_hatch(scene)
     outline = props.layer_outline(scene)
-    if not (dim or hatch or outline):
+    onion = props.onion(scene) and cels.animated(scene, image)
+    if not (dim or hatch or outline or onion):
         return
     layer = layers.active_layer(image)
     if layer is None or layer.image is None or tuple(layer.image.size) != tuple(image.size):
@@ -82,8 +106,10 @@ def _draw(region: bpy.types.Region, image: bpy.types.Image) -> None:
         )
         if clipped[0] < clipped[2] and clipped[1] < clipped[3]:
             overlay.draw_lines(_hatch_points(clipped, tx - ty), prefs.color("hatch_color"))
+    corners = [(rect[0], rect[1]), (rect[2], rect[1]), (rect[2], rect[3]), (rect[0], rect[3])]
+    if onion:
+        _draw_ghosts(scene, image, corners)
     if dim or hatch:
-        corners = [(rect[0], rect[1]), (rect[2], rect[1]), (rect[2], rect[3]), (rect[0], rect[3])]
         _draw_layers(image, layer, corners, stroke)
     if not outline:
         return
@@ -114,12 +140,46 @@ def register() -> None:
         default=False,
         update=_redraw,
     )
+    scene_cls.blix_onion = bpy.props.BoolProperty(
+        name="Onion Skin",
+        description="Ghost the cels before and after the current one over the canvas",
+        default=False,
+        update=_redraw,
+    )
+    scene_cls.blix_onion_before = bpy.props.IntProperty(
+        name="Before",
+        description="Cels to ghost before the current one",
+        default=1,
+        min=0,
+        max=4,
+        update=_redraw,
+    )
+    scene_cls.blix_onion_after = bpy.props.IntProperty(
+        name="After",
+        description="Cels to ghost after the current one",
+        default=1,
+        min=0,
+        max=4,
+        update=_redraw,
+    )
+    scene_cls.blix_onion_opacity = bpy.props.FloatProperty(
+        name="Opacity",
+        description="Opacity of the nearest ghost; farther ones fade",
+        default=0.35,
+        min=0.0,
+        max=1.0,
+        update=_redraw,
+    )
     overlay.under_draws.append(_draw)
 
 
 def unregister() -> None:
     overlay.under_draws.remove(_draw)
     scene_cls = cast(Any, bpy.types.Scene)
+    del scene_cls.blix_onion_opacity
+    del scene_cls.blix_onion_after
+    del scene_cls.blix_onion_before
+    del scene_cls.blix_onion
     del scene_cls.blix_layer_outline
     del scene_cls.blix_layer_hatch
     del scene_cls.blix_layer_dim

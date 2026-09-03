@@ -131,3 +131,19 @@ def cels(scene: bpy.types.Scene) -> Any:
 
 def cel_follow(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_cel_follow
+
+
+def onion(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_onion
+
+
+def onion_before(scene: bpy.types.Scene) -> int:
+    return int(cast(Any, scene).blix_onion_before)
+
+
+def onion_after(scene: bpy.types.Scene) -> int:
+    return int(cast(Any, scene).blix_onion_after)
+
+
+def onion_opacity(scene: bpy.types.Scene) -> float:
+    return cast(Any, scene).blix_onion_opacity

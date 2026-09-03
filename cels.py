@@ -96,6 +96,12 @@ def _write_cel_key(scene: bpy.types.Scene, item: Any, frame: int, index: int) ->
     _rewrite(scene, item, "cel", [*pairs, (frame, index)])
 
 
+def _evaluate(scene: bpy.types.Scene, item: Any, name: str, frame: int) -> int:
+    """Keyed value of a track property at frame, its static value when unkeyed."""
+    curve = _fcurve(scene, item, name)
+    return round(getattr(item, name) if curve is None else curve.evaluate(frame))
+
+
 def slot_at(scene: bpy.types.Scene, canvas: bpy.types.Image, layer: Any, frame: int) -> int | None:
     """Index of the cel slot the layer shows at frame; None for a layer without cels."""
     count = len(layer.cels)
@@ -107,9 +113,48 @@ def slot_at(scene: bpy.types.Scene, canvas: bpy.types.Image, layer: Any, frame: 
 
         slot = layers.current_slot(layer)
         return 0 if slot is None else list(layer.cels).index(slot)
-    curve = _fcurve(scene, item, "cel")
-    value = item.cel if curve is None else round(curve.evaluate(frame))
-    return min(max(int(value), 0), count - 1)
+    return min(max(_evaluate(scene, item, "cel", frame), 0), count - 1)
+
+
+def state_at(
+    scene: bpy.types.Scene, canvas: bpy.types.Image, layer: Any, frame: int
+) -> bpy.types.Image | None:
+    """Image the layer shows at frame, None when hidden there; evaluates curves, never scrubs."""
+    if not layer.visible or layer.image is None:
+        return None
+    item = track(scene, canvas, layer)
+    if item is None:
+        return layer.image
+    if not _evaluate(scene, item, "visible", frame):
+        return None
+    count = len(layer.cels)
+    if count == 0:
+        return layer.image
+    return layer.cels[min(max(_evaluate(scene, item, "cel", frame), 0), count - 1)].image
+
+
+def ghost_frames(
+    scene: bpy.types.Scene, canvas: bpy.types.Image, frame: int, before: int, after: int
+) -> tuple[list[int], list[int]]:
+    """Frames of the cels before and after the one at frame, nearest first; a hold counts once."""
+    changes = boundaries(scene, canvas)
+    earlier: list[int] = []
+    cursor = frame
+    for _ in range(before):
+        starts = [change for change in changes if change <= cursor]
+        if not starts:
+            break
+        cursor = starts[-1] - 1
+        earlier.append(cursor)
+    later: list[int] = []
+    cursor = frame
+    for _ in range(after):
+        nexts = [change for change in changes if change > cursor]
+        if not nexts:
+            break
+        cursor = nexts[0]
+        later.append(cursor)
+    return earlier, later
 
 
 def _add_track(scene: bpy.types.Scene, canvas: bpy.types.Image, layer: Any) -> Any:
