@@ -423,6 +423,18 @@ _stand_in: paint.StandIn | None = None
 _fill_mask: np.ndarray | None = None
 
 
+def layers_above(canvas: bpy.types.Image) -> list[Any]:
+    return list(props.layers(canvas))[: props.layers_index(canvas)]
+
+
+def toggle_above(canvas: bpy.types.Image) -> None:
+    """Hide every layer above the active one, or show them all when none is visible."""
+    above = layers_above(canvas)
+    shown = not any(layer.visible for layer in above)
+    for layer in above:
+        layer.visible = shown
+
+
 def _stroke_tick() -> float | None:
     global _stroke_canvas, _stand_in, _fill_mask
     from . import mirror
@@ -540,6 +552,9 @@ def _register_keymap() -> None:
         return
     keymap = keyconfig.keymaps.new(name="Image Paint", space_type="EMPTY")
     item = keymap.keymap_items.new(BLIX_OT_stroke_sync.bl_idname, "LEFTMOUSE", "PRESS", any=True)
+    _keymaps.append((keymap, item))
+    keymap = keyconfig.keymaps.new(name="Image", space_type="IMAGE_EDITOR")
+    item = keymap.keymap_items.new(BLIX_OT_layer_toggle_above.bl_idname, "H", "PRESS")
     _keymaps.append((keymap, item))
 
 
@@ -806,6 +821,26 @@ class BLIX_OT_layer_view_toggle(_CanvasOperator):
         return {"FINISHED"}
 
 
+class BLIX_OT_layer_toggle_above(_CanvasOperator):
+    """Hide every layer above the active one, or show them all when none is visible"""
+
+    bl_idname = "blix.layer_toggle_above"
+    bl_label = "Toggle Layers Above"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        canvas = resolve_canvas(context)
+        return canvas is not None and len(layers_above(canvas)) > 0
+
+    def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
+        canvas = resolve_canvas(context)
+        assert canvas is not None
+        with _undo_step(context, canvas, "Blix Toggle Layers Above"):
+            toggle_above(canvas)
+        return {"FINISHED"}
+
+
 _classes = (
     BlixLayer,
     BLIX_OT_stroke_sync,
@@ -818,6 +853,7 @@ _classes = (
     BLIX_OT_layer_flatten,
     BLIX_OT_layers_update,
     BLIX_OT_layer_view_toggle,
+    BLIX_OT_layer_toggle_above,
 )
 
 

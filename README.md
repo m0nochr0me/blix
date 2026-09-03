@@ -132,6 +132,7 @@ edited by double-clicking it in the list; the tag is fixed.
 _Edit Active Layer_ switches the editor to the layer image for painting; _Show Composite_ switches
 back and recomposites. Edits made straight on the composite canvas are synced into the active layer
 before the next recomposite.
+`H` hides every layer above the active one, or shows them all when none is visible.
 
 Three toggles under _Edit Active Layer_ help tell the active layer apart while painting on the
 composite: _Dim Below_ darkens the layers below, _Hatch Below_ draws diagonal hatching over them,
