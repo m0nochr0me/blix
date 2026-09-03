@@ -37,14 +37,14 @@ def _draw_layers(
     canvas: bpy.types.Image, layer: Any, corners: select.Quad, stroke: np.ndarray | None
 ) -> None:
     """Redraw the active layer, its in-progress stroke and the layers above at full brightness."""
-    if layer.visible:
+    if layers.shown(canvas, layer):
         texture = gpu.texture.from_image(layer.image)
         select.draw_texture_quad(corners, texture, False, layer.opacity)
     if stroke is not None:
         select.draw_texture_quad(corners, select.make_texture(stroke), True, layer.opacity)
     stack = list(props.layers(canvas))
     for upper in reversed(stack[: props.layers_index(canvas)]):
-        if not upper.visible or upper.image is None:
+        if not layers.shown(canvas, upper) or upper.image is None:
             continue
         if tuple(upper.image.size) != tuple(canvas.size):
             continue

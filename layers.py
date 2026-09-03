@@ -8,7 +8,7 @@ import bpy
 import numpy as np
 from bpy.app.handlers import persistent
 
-from . import overlay, paint, props, select, undo
+from . import cels, overlay, paint, props, select, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
@@ -64,12 +64,17 @@ def composite_pixels(canvas: bpy.types.Image) -> np.ndarray:
     dest = np.zeros((height, width, 4), dtype=np.float32)
     for layer in reversed(list(props.layers(canvas))):
         image = layer.image
-        if not layer.visible or layer.opacity == 0.0 or image is None:
+        if not shown(canvas, layer) or layer.opacity == 0.0 or image is None:
             continue
         if tuple(image.size) != (width, height):
             continue
         dest = blend_over(dest, select.read_pixels(image), layer.blend, layer.opacity)
     return dest
+
+
+def shown(canvas: bpy.types.Image, layer: Any) -> bool:
+    """Effective visibility: the eye toggle gated by the layer's cel track at this frame."""
+    return bool(layer.visible) and cels.on(canvas, layer)
 
 
 _composite_cache: dict[str, np.ndarray] = {}
@@ -294,6 +299,9 @@ class BlixLayer(bpy.types.PropertyGroup):
     height: bpy.props.IntProperty(
         name="Height", default=1, min=1, soft_max=16, update=_stack_changed
     )
+    cel: bpy.props.BoolProperty(
+        name="Cel", description="Treat this layer as an animation frame", default=True
+    )
 
 
 def layer_tag(layer: Any) -> str:
@@ -391,6 +399,7 @@ def duplicate_layer(canvas: bpy.types.Image, index: int) -> None:
     layer.blend = source.blend
     layer.visible = source.visible
     layer.height = source.height
+    layer.cel = source.cel
     layer.image = _clone_image(canvas, layer_name(layer), select.read_pixels(source.image))
     stack.move(len(stack) - 1, index)
     props.set_layers_index(canvas, index)
@@ -643,6 +652,8 @@ def _undo_step(
     sync_canvas(canvas)
     push_history(canvas)
     yield
+    if context.scene is not None:
+        cels.sync(context.scene, canvas)
     push_history(canvas)
     undo.forget(canvas)
     undo.mark(canvas)
@@ -693,6 +704,8 @@ class BLIX_OT_layer_add(_CanvasOperator):
         canvas = resolve_canvas(context)
         assert canvas is not None
         add_layer(canvas, next_layer_number(canvas))
+        if context.scene is not None:
+            cels.sync(context.scene, canvas)
         _pack_layers(canvas)
         cast(Any, bpy.ops.ed).undo_push(message="Blix Add Layer")
         return {"FINISHED"}

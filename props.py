@@ -123,3 +123,11 @@ def stack_projection(scene: bpy.types.Scene) -> str:
 
 def stack_angle(scene: bpy.types.Scene) -> float:
     return cast(Any, scene).blix_stack_angle
+
+
+def cels(scene: bpy.types.Scene) -> Any:
+    return cast(Any, scene).blix_cels
+
+
+def cel_follow(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_cel_follow

@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import bpy
 
-from . import layers, props
+from . import cels, layers, props
 
 
 def _space(context: bpy.types.Context) -> bpy.types.SpaceImageEditor:
@@ -160,6 +160,17 @@ class BLIX_UL_layers(bpy.types.UIList):
         tag.alignment = "LEFT"
         tag.label(text=layers.layer_tag(item))
         row.prop(item, "label", text="", emboss=False)
+        canvas = cast(bpy.types.Image, data)
+        scene = context.scene if context is not None else None
+        if scene is not None and cels.animated(scene, canvas):
+            row.active = layers.shown(canvas, item)
+            row.prop(
+                item,
+                "cel",
+                text="",
+                icon="KEYFRAME_HLT" if item.cel else "KEYFRAME",
+                emboss=False,
+            )
         row.prop(
             item, "visible", text="", icon="HIDE_OFF" if item.visible else "HIDE_ON", emboss=False
         )
@@ -214,6 +225,45 @@ class BLIX_PT_layers(bpy.types.Panel):
         row.operator("blix.layer_merge_down", text="Merge Down")
         row.operator("blix.layer_flatten", text="Flatten")
         layout.operator("blix.layers_update")
+
+
+class BLIX_PT_cels(bpy.types.Panel):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Blix"
+    bl_label = "Animation"
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        scene = context.scene
+        assert layout is not None
+        assert scene is not None
+        image = _space(context).image
+        if image is None:
+            return
+        canvas = image if len(props.layers(image)) else props.canvas_of(image)
+        if canvas is None:
+            return
+        if not cels.animated(scene, canvas):
+            layout.operator("blix.cels_enable", icon="PLAY")
+            return
+        layout.prop(scene, "frame_current")
+        layout.prop(scene, "blix_cel_follow", toggle=True)
+        layer = layers.active_layer(canvas)
+        item = cels.track(scene, canvas, layer) if layer is not None else None
+        if item is not None:
+            row = layout.row(align=True)
+            row.prop(item, "frame_start")
+            row.prop(item, "frame_end")
+            col = layout.column()
+            col.use_property_split = True
+            col.use_property_decorate = True
+            col.prop(item, "visible")
+        row = layout.row(align=True)
+        row.operator("blix.cels_layout")
+        row.operator("blix.cel_insert")
+        layout.operator("blix.cels_export", icon="EXPORT")
+        layout.operator("blix.cels_disable")
 
 
 class BLIX_PT_stacking(bpy.types.Panel):
@@ -293,6 +343,7 @@ _classes = (
     BLIX_PT_mirror,
     BLIX_UL_layers,
     BLIX_PT_layers,
+    BLIX_PT_cels,
     BLIX_PT_stacking,
     BLIX_PT_dither,
     BLIX_PT_palette,

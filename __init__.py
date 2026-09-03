@@ -5,6 +5,7 @@ import sys
 
 from . import (
     aids,
+    cels,
     clipboard,
     dither,
     erase,
@@ -37,6 +38,7 @@ _modules = (
     transform,
     clipboard,
     layers,
+    cels,
     aids,
     erase,
     line,

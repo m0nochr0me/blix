@@ -39,7 +39,9 @@ def stack_layers(canvas: bpy.types.Image) -> list[Any]:
     return [
         layer
         for layer in reversed(list(props.layers(canvas)))
-        if layer.visible and layer.image is not None and tuple(layer.image.size) == (width, height)
+        if layers.shown(canvas, layer)
+        and layer.image is not None
+        and tuple(layer.image.size) == (width, height)
     ]
 
 
