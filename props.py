@@ -129,6 +129,10 @@ def stack_scale(scene: bpy.types.Scene) -> int:
     return cast(Any, scene).blix_stack_scale
 
 
+def stack_scale_layers(scene: bpy.types.Scene) -> bool:
+    return cast(Any, scene).blix_stack_scale_layers
+
+
 def cels(scene: bpy.types.Scene) -> Any:
     return cast(Any, scene).blix_cels
 

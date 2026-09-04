@@ -78,14 +78,15 @@ def _slices(canvas: bpy.types.Image, included: list[Any], scene: bpy.types.Scene
     sin_e = math.sin(math.radians(elevation))
     cos_e = math.cos(math.radians(elevation))
     total = sum(layer.height for layer in included)
+    step = 1 if props.stack_scale_layers(scene) else scale
     radius = math.hypot(*size) / 2
-    anchor = (1.25 * width + radius, height / 2 - (total - 1) * scale * cos_e / 2)
+    anchor = (1.25 * width + radius, height / 2 - (total - 1) * step * cos_e / 2)
     slices: list[Slice] = []
     z = 0
     for layer in included:
         texture = gpu.texture.from_image(layer.image)
         for _ in range(layer.height):
-            corners = _slice_corners(size, theta, sin_e, cos_e, float(z * scale), anchor)
+            corners = _slice_corners(size, theta, sin_e, cos_e, float(z * step), anchor)
             slices.append((texture, corners))
             z += 1
     return slices
@@ -280,6 +281,12 @@ def register() -> None:
         max=16,
         update=_redraw,
     )
+    scene_cls.blix_stack_scale_layers = bpy.props.BoolProperty(
+        name="Scale Layers",
+        description="Scale layers before stacking, one pixel per height unit; off scales the stack",
+        default=False,
+        update=_redraw,
+    )
     overlay.extra_draws.append(_draw_stack)
 
 
@@ -288,6 +295,7 @@ def unregister() -> None:
     overlay.extra_draws.remove(_draw_stack)
     _target = None
     scene_cls = cast(Any, bpy.types.Scene)
+    del scene_cls.blix_stack_scale_layers
     del scene_cls.blix_stack_scale
     del scene_cls.blix_stack_angle
     del scene_cls.blix_stack_projection
