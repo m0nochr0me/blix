@@ -111,6 +111,7 @@ class BLIX_PT_select(bpy.types.Panel):
         row = layout.row(align=True)
         row.operator("blix.select_copy", text="Copy")
         row.operator("blix.select_delete", text="Delete")
+        layout.operator("blix.copy_flattened")
 
 
 class BLIX_PT_shapes(bpy.types.Panel):

@@ -92,8 +92,12 @@ edges stay crisp and no new colors appear.
 The _Mode_ row in the Selection panel sets the default for a plain LMB gesture; Shift and Ctrl
 override it for that gesture. Ctrl+LMB within 6 px of a guide still grabs the guide instead of
 subtracting. Quarter turns and flips are panel buttons, and Copy and Delete exist as buttons too.
-Paste floats the clipboard as a movable selection — click or Enter commits, Esc cancels. With a
-layer stack present, selection edits target the active layer.
+Copy puts the pixels on the system clipboard as well, and _Copy Flattened_ puts the whole
+composite there. Paste takes the clipboard image — copied in Blix or in any other app — lands it
+on a new layer above the active one and starts a move: click or Enter confirms, Esc leaves it
+where it landed. A Blix copy pastes at its source position, an outside image is centered, and an
+image without layers gets a layer stack first. With a layer stack present, selection edits target
+the active layer.
 
 ### Shapes
 
@@ -146,7 +150,7 @@ edited by double-clicking it in the list; the tag is fixed.
 _Edit Active Layer_ switches the editor to the layer image for painting; _Show Composite_ switches
 back and recomposites. Edits made straight on the composite canvas are synced into the active layer
 before the next recomposite; _Update Composite_ forces one. A locked layer takes no edits:
-selection transforms, paste and Ctrl erase are refused, remove and merge down are disabled, and
+selection transforms and Ctrl erase are refused, remove and merge down are disabled, and
 strokes painted on the composite over it are dropped at the next recomposite. `H` hides every
 layer above the active one, or shows them all when none is visible.
 

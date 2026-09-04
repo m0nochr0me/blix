@@ -299,16 +299,17 @@ def combine_mask(base: np.ndarray | None, shape: np.ndarray, mode: str) -> np.nd
     return base & ~shape
 
 
-def place_mask(image: bpy.types.Image, sub: np.ndarray, origin: tuple[int, int]) -> np.ndarray:
+def place(image: bpy.types.Image, sub: np.ndarray, origin: tuple[int, int]) -> np.ndarray:
+    """Mask or RGBA buffer copied onto a zeroed image-sized array at origin, clipped to it."""
     width, height = image.size
-    mask = np.zeros((height, width), dtype=bool)
+    full = np.zeros((height, width, *sub.shape[2:]), dtype=sub.dtype)
     ox, oy = origin
     box = clip_rect((width, height), (ox, oy, ox + sub.shape[1], oy + sub.shape[0]))
     if box is None:
-        return mask
+        return full
     x0, y0, x1, y1 = box
-    mask[y0:y1, x0:x1] = sub[y0 - oy : y1 - oy, x0 - ox : x1 - ox]
-    return mask
+    full[y0:y1, x0:x1] = sub[y0 - oy : y1 - oy, x0 - ox : x1 - ox]
+    return full
 
 
 def lift(image: bpy.types.Image, mask: np.ndarray, rect: Rect) -> tuple[np.ndarray, np.ndarray]:
@@ -386,7 +387,7 @@ def commit_float(
         assert session.mask is not None
         _restore(pixels, session.mask)
     session.drop_float()
-    session.set_mask(place_mask(image, float_mask, origin))
+    session.set_mask(place(image, float_mask, origin))
     rect = session.rect
     under = None if rect is None else pixels[rect[1] : rect[3], rect[0] : rect[2]].copy()
     _paste(pixels, buffer, origin)
