@@ -71,19 +71,21 @@ def _slice_corners(
 
 def _slices(canvas: bpy.types.Image, included: list[Any], scene: bpy.types.Scene) -> list[Slice]:
     width, height = canvas.size
+    scale = props.stack_scale(scene)
+    size = (width * scale, height * scale)
     elevation, yaw = _PROJECTIONS[props.stack_projection(scene)]
     theta = math.radians(props.stack_angle(scene) + yaw)
     sin_e = math.sin(math.radians(elevation))
     cos_e = math.cos(math.radians(elevation))
     total = sum(layer.height for layer in included)
-    radius = math.hypot(width, height) / 2
-    anchor = (1.25 * width + radius, height / 2 - (total - 1) * cos_e / 2)
+    radius = math.hypot(*size) / 2
+    anchor = (1.25 * width + radius, height / 2 - (total - 1) * scale * cos_e / 2)
     slices: list[Slice] = []
     z = 0
     for layer in included:
         texture = gpu.texture.from_image(layer.image)
         for _ in range(layer.height):
-            corners = _slice_corners((width, height), theta, sin_e, cos_e, float(z), anchor)
+            corners = _slice_corners(size, theta, sin_e, cos_e, float(z * scale), anchor)
             slices.append((texture, corners))
             z += 1
     return slices
@@ -157,16 +159,17 @@ def _draw_stack(region: bpy.types.Region, image: bpy.types.Image) -> None:
         select.draw_texture_quad(_to_region(affine, corners), texture, False)
 
 
-def build_strip(canvas: bpy.types.Image) -> np.ndarray | None:
+def build_strip(canvas: bpy.types.Image, scale: int = 1) -> np.ndarray | None:
+    """Horizontal strip of visible slices, bottom first, each nearest-upscaled by `scale`."""
     included = stack_layers(canvas)
     if not included:
         return None
-    width, height = canvas.size
+    width, height = canvas.size[0] * scale, canvas.size[1] * scale
     total = sum(layer.height for layer in included)
     strip = np.zeros((height, width * total, 4), dtype=np.float32)
     cell = 0
     for layer in included:
-        pixels = select.read_pixels(layer.image)
+        pixels = select.read_pixels(layer.image).repeat(scale, axis=0).repeat(scale, axis=1)
         for _ in range(layer.height):
             strip[:, cell * width : (cell + 1) * width] = pixels
             cell += 1
@@ -211,7 +214,10 @@ class BLIX_OT_stack_export(bpy.types.Operator, ExportHelper):
         canvas = layers.resolve_canvas(context)
         assert canvas is not None
         layers.sync_canvas(canvas)
-        strip = build_strip(canvas)
+        scene = context.scene
+        assert scene is not None
+        scale = props.stack_scale(scene)
+        strip = build_strip(canvas, scale)
         if strip is None:
             self.report({"ERROR"}, "No visible layers")
             return {"CANCELLED"}
@@ -221,8 +227,8 @@ class BLIX_OT_stack_export(bpy.types.Operator, ExportHelper):
         except (RuntimeError, OSError) as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
-        slices = strip.shape[1] // canvas.size[0]
-        self.report({"INFO"}, f"{slices} slices to {Path(filepath).name}")
+        slices = strip.shape[1] // (canvas.size[0] * scale)
+        self.report({"INFO"}, f"{slices} slices at x{scale} to {Path(filepath).name}")
         return {"FINISHED"}
 
 
@@ -266,6 +272,14 @@ def register() -> None:
         max=360.0,
         update=_redraw,
     )
+    scene_cls.blix_stack_scale = bpy.props.IntProperty(
+        name="Scale",
+        description="Pixel scale of the stack preview and exported slices, x1 to x16",
+        default=1,
+        min=1,
+        max=16,
+        update=_redraw,
+    )
     overlay.extra_draws.append(_draw_stack)
 
 
@@ -274,6 +288,7 @@ def unregister() -> None:
     overlay.extra_draws.remove(_draw_stack)
     _target = None
     scene_cls = cast(Any, bpy.types.Scene)
+    del scene_cls.blix_stack_scale
     del scene_cls.blix_stack_angle
     del scene_cls.blix_stack_projection
     del scene_cls.blix_stack_resolution

@@ -318,6 +318,7 @@ class BLIX_PT_stacking(bpy.types.Panel):
         sub.prop(scene, "blix_stack_resolution")
         col.prop(scene, "blix_stack_projection", text="Projection")
         col.prop(scene, "blix_stack_angle")
+        col.prop(scene, "blix_stack_scale")
         layer = layers.active_layer(canvas)
         if layer is not None:
             layout.prop(layer, "height")

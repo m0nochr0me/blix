@@ -125,6 +125,10 @@ def stack_angle(scene: bpy.types.Scene) -> float:
     return cast(Any, scene).blix_stack_angle
 
 
+def stack_scale(scene: bpy.types.Scene) -> int:
+    return cast(Any, scene).blix_stack_scale
+
+
 def cels(scene: bpy.types.Scene) -> Any:
     return cast(Any, scene).blix_cels
 
