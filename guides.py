@@ -1,5 +1,6 @@
 """Guide data model on Image and interactive guide operators."""
 
+import math
 from typing import TYPE_CHECKING, Any, cast
 
 import bpy
@@ -18,10 +19,13 @@ class BlixGuide(bpy.types.PropertyGroup):
         items=(
             ("VERTICAL", "Vertical", "Guide along Y at X position"),
             ("HORIZONTAL", "Horizontal", "Guide along X at Y position"),
+            ("DIAGONAL", "Diagonal", "Guide through X, Y at angle"),
         ),
         default="VERTICAL",
     )
     position: bpy.props.IntProperty(name="Position", default=0)
+    position_y: bpy.props.IntProperty(name="Y", default=0)
+    angle: bpy.props.FloatProperty(name="Angle", subtype="ANGLE", default=math.pi / 4, step=100)
 
 
 def _image(context: bpy.types.Context) -> bpy.types.Image | None:
@@ -38,13 +42,34 @@ def find_near(region: bpy.types.Region, image: bpy.types.Image, mx: float, my: f
         if guide.orientation == "VERTICAL":
             gx, _ = overlay.image_to_region(region, image, guide.position, 0.0)
             dist = abs(mx - gx)
-        else:
+        elif guide.orientation == "HORIZONTAL":
             _, gy = overlay.image_to_region(region, image, 0.0, image.size[1] - guide.position)
             dist = abs(my - gy)
+        else:
+            gx, gy = overlay.image_to_region(
+                region, image, guide.position, image.size[1] - guide.position_y
+            )
+            dist = abs((mx - gx) * math.sin(guide.angle) - (my - gy) * math.cos(guide.angle))
         if dist <= best_dist:
             best_dist = dist
             best = index
     return best
+
+
+def outside(image: bpy.types.Image, guide: Any) -> bool:
+    width, height = image.size
+    if guide.orientation == "DIAGONAL":
+        segment = overlay.clip_line(
+            guide.position,
+            height - guide.position_y,
+            math.cos(guide.angle),
+            math.sin(guide.angle),
+            width,
+            height,
+        )
+        return segment is None
+    extent = height if guide.orientation == "HORIZONTAL" else width
+    return guide.position < 0 or guide.position > extent
 
 
 class BLIX_OT_guide_add(bpy.types.Operator):
@@ -59,6 +84,7 @@ class BLIX_OT_guide_add(bpy.types.Operator):
         items=(
             ("VERTICAL", "Vertical", ""),
             ("HORIZONTAL", "Horizontal", ""),
+            ("DIAGONAL", "Diagonal", ""),
         ),
         default="VERTICAL",
     )
@@ -74,6 +100,7 @@ class BLIX_OT_guide_add(bpy.types.Operator):
         guide.orientation = self.orientation
         extent = image.size[1] if self.orientation == "HORIZONTAL" else image.size[0]
         guide.position = extent // 2
+        guide.position_y = image.size[1] // 2
         props.set_guides_index(image, len(props.guides(image)) - 1)
         overlay.tag_redraw(context)
         return {"FINISHED"}
@@ -123,7 +150,7 @@ class BLIX_OT_guide_clear(bpy.types.Operator):
 
 
 class BLIX_OT_guide_drag(bpy.types.Operator):
-    """Drag guide: create from ruler band, Ctrl grabs nearby guide"""
+    """Drag guide: create from ruler band or corner, Ctrl grabs nearby guide"""
 
     bl_idname = "blix.guide_drag"
     bl_label = "Drag Guide"
@@ -131,7 +158,7 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
 
     _index: int
     _is_new: bool
-    _original: int
+    _original: tuple[int, int]
 
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
@@ -141,22 +168,28 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
             return {"PASS_THROUGH"}
         region = context.region
         scene = context.scene
-        assert region is not None
+        if region is None or region.type != "WINDOW":
+            return {"PASS_THROUGH"}
         mx, my = event.mouse_region_x, event.mouse_region_y
         band = overlay.ruler_px()
         left_off, top_off = overlay.ruler_offsets(context.area, region)
         rulers = scene is not None and props.show_rulers(scene)
+        in_top = my >= region.height - top_off - band
+        in_left = mx <= left_off + band
 
         if event.ctrl:
             index = find_near(region, image, mx, my)
             if index < 0:
                 return {"PASS_THROUGH"}
+            guide = props.guides(image)[index]
             self._index = index
             self._is_new = False
-            self._original = props.guides(image)[index].position
-        elif rulers and my >= region.height - top_off - band:
+            self._original = (guide.position, guide.position_y)
+        elif rulers and in_top and in_left:
+            self._start(image, "DIAGONAL")
+        elif rulers and in_top:
             self._start(image, "HORIZONTAL")
-        elif rulers and mx <= left_off + band:
+        elif rulers and in_left:
             self._start(image, "VERTICAL")
         else:
             return {"PASS_THROUGH"}
@@ -171,7 +204,7 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
         guide.orientation = orientation
         self._index = len(props.guides(image)) - 1
         self._is_new = True
-        self._original = 0
+        self._original = (0, 0)
 
     def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
         image = _image(context)
@@ -185,14 +218,16 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
             x, y = overlay.region_to_image(
                 region, image, event.mouse_region_x, event.mouse_region_y
             )
-            value = image.size[1] - y if guide.orientation == "HORIZONTAL" else x
-            guide.position = round(value)
+            if guide.orientation == "HORIZONTAL":
+                guide.position = round(image.size[1] - y)
+            else:
+                guide.position = round(x)
+                guide.position_y = round(image.size[1] - y)
             overlay.tag_redraw(context)
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "RELEASE":
-            extent = image.size[1] if guide.orientation == "HORIZONTAL" else image.size[0]
-            if guide.position < 0 or guide.position > extent:
+            if outside(image, guide):
                 props.guides(image).remove(self._index)
             overlay.tag_redraw(context)
             return {"FINISHED"}
@@ -201,7 +236,7 @@ class BLIX_OT_guide_drag(bpy.types.Operator):
             if self._is_new:
                 props.guides(image).remove(self._index)
             else:
-                guide.position = self._original
+                guide.position, guide.position_y = self._original
             overlay.tag_redraw(context)
             return {"CANCELLED"}
 
@@ -226,7 +261,7 @@ def _register_keymap() -> None:
     keyconfig = window_manager.keyconfigs.addon
     if keyconfig is None:
         return
-    keymap = keyconfig.keymaps.new(name="Image", space_type="IMAGE_EDITOR")
+    keymap = keyconfig.keymaps.new(name="Screen Editing", space_type="EMPTY")
     for ctrl in (False, True):
         item = keymap.keymap_items.new(
             BLIX_OT_guide_drag.bl_idname, "LEFTMOUSE", "PRESS", ctrl=ctrl

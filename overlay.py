@@ -92,6 +92,23 @@ def fill_rects(
     batch_for_shader(shader, "TRIS", {"pos": verts}).draw(shader)
 
 
+def clip_line(
+    px: float, py: float, dx: float, dy: float, width: float, height: float
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    t_min, t_max = -math.inf, math.inf
+    for start, delta, extent in ((px, dx, width), (py, dy, height)):
+        if abs(delta) < 1e-9:
+            if start < 0 or start > extent:
+                return None
+            continue
+        t0, t1 = -start / delta, (extent - start) / delta
+        t_min = max(t_min, min(t0, t1))
+        t_max = min(t_max, max(t0, t1))
+    if t_min > t_max:
+        return None
+    return (px + dx * t_min, py + dy * t_min), (px + dx * t_max, py + dy * t_max)
+
+
 def draw_lines(points: list[tuple[float, float]], color: tuple[float, float, float, float]) -> None:
     if not points:
         return
@@ -153,13 +170,21 @@ def _draw_grid(region: bpy.types.Region, image: bpy.types.Image, scene: bpy.type
 
 def _draw_guides(region: bpy.types.Region, image: bpy.types.Image) -> None:
     points: list[tuple[float, float]] = []
+    height = image.size[1]
     for guide in props.guides(image):
         if guide.orientation == "VERTICAL":
             rx, _ = image_to_region(region, image, guide.position, 0.0)
             points += [(rx, 0.0), (rx, region.height)]
-        else:
-            _, ry = image_to_region(region, image, 0.0, image.size[1] - guide.position)
+        elif guide.orientation == "HORIZONTAL":
+            _, ry = image_to_region(region, image, 0.0, height - guide.position)
             points += [(0.0, ry), (region.width, ry)]
+        else:
+            rx, ry = image_to_region(region, image, guide.position, height - guide.position_y)
+            segment = clip_line(
+                rx, ry, math.cos(guide.angle), math.sin(guide.angle), region.width, region.height
+            )
+            if segment is not None:
+                points += segment
     draw_lines(points, prefs.color("guide_color"))
 
 

@@ -35,16 +35,23 @@ while its own grid is on.
 ### Rulers & Guides
 
 Rulers band the top and left edges of the region, with zoom-adaptive ticks labelled in image
-pixels, origin top-left. Guides are stored per image and survive save/reload.
+pixels, origin top-left. Guides are vertical, horizontal or diagonal. A diagonal runs through an
+anchor pixel (X, Y, which may lie outside the image) at an angle counter-clockwise from the X axis,
+so several diagonals sharing one anchor fan out from a vanishing point. Guides are stored per image
+and survive save/reload.
 
-| Action       | Input                           |
-| ------------ | ------------------------------- |
-| Create guide | LMB drag out of a ruler band    |
-| Move guide   | Ctrl+LMB within 6 px of a guide |
-| Delete guide | Drag it outside the image       |
-| Cancel drag  | Esc or RMB                      |
+| Action          | Input                                              |
+| --------------- | -------------------------------------------------- |
+| Create guide    | LMB drag out of a ruler band                       |
+| Create diagonal | LMB drag out of the corner where the bands meet    |
+| Move guide      | Ctrl+LMB within 6 px of a guide (moves the anchor) |
+| Delete guide    | Drag it so its line no longer crosses the image    |
+| Cancel drag     | Esc or RMB                                         |
 
-Add, remove and clear also exist as buttons; the list edits positions numerically.
+The `+` menu adds a guide of any kind at the image center; the list edits positions and the
+diagonal angle numerically; remove and clear are buttons. The drag binding sits in the
+`Screen Editing` keymap so it wins over the active tool. A press that is neither in a band nor
+near a guide passes through to the tool.
 
 ### Selection & Transform
 

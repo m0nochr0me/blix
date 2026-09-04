@@ -27,6 +27,9 @@ class BLIX_PT_grid(bpy.types.Panel):
         col.prop(scene, "blix_grid_divisions", text="Major Every")
 
 
+_GUIDE_AXIS = {"VERTICAL": "X", "HORIZONTAL": "Y", "DIAGONAL": "D"}
+
+
 class BLIX_UL_guides(bpy.types.UIList):
     def draw_item(
         self,
@@ -42,11 +45,18 @@ class BLIX_UL_guides(bpy.types.UIList):
     ) -> None:
         assert item is not None
         row = layout.row(align=True)
-        axis = "Y" if item.orientation == "HORIZONTAL" else "X"
+        tag = row.row(align=True)
+        tag.alignment = "LEFT"
+        axis = _GUIDE_AXIS[item.orientation]
         slot = index if index is not None else 0
         same_axis = props.guides(cast(bpy.types.Image, data))[:slot]
         number = sum(1 for other in same_axis if other.orientation == item.orientation) + 1
-        row.prop(item, "position", text=f"{axis}{number}", emboss=False)
+        tag.label(text=f"{axis}{number}")
+        row.prop(item, "position", text="", emboss=False)
+        if item.orientation != "DIAGONAL":
+            return
+        row.prop(item, "position_y", text="", emboss=False)
+        row.prop(item, "angle", text="", emboss=False)
 
 
 class BLIX_PT_guides(bpy.types.Panel):
@@ -67,15 +77,14 @@ class BLIX_PT_guides(bpy.types.Panel):
         image = _space(context).image
         if image is None:
             return
-        split = layout.split(factor=0.9)
-        split.template_list(
+        row = layout.row()
+        row.template_list(
             "BLIX_UL_guides", "", image, "blix_guides", image, "blix_guides_index", rows=3
         )
-        col = split.column(align=True)
-        cast(Any, col.operator("blix.guide_add", text="V")).orientation = "VERTICAL"
-        cast(Any, col.operator("blix.guide_add", text="H")).orientation = "HORIZONTAL"
-        col.separator()
+        col = row.column(align=True)
+        col.operator_menu_enum("blix.guide_add", "orientation", text="", icon="ADD")
         col.operator("blix.guide_remove", text="", icon="REMOVE")
+        col.separator()
         col.operator("blix.guide_clear", text="", icon="X")
 
 
