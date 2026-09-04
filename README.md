@@ -1,9 +1,10 @@
 # Blix
 
 Pixel-art editing tools for the Blender image editor: pixel grid, rulers and guides, box,
-ellipse, lasso, brush and wand selection with boolean modes, nearest-neighbor transforms and a
-clipboard, shape drawing, mirror symmetry, a layer stack with keyframed cel animation, and
-ordered Bayer dithering.
+ellipse, lasso, brush and wand selection with boolean modes, RotSprite transforms and a
+clipboard, shape drawing, mirror symmetry, brush line mode and erase, a layer stack with
+painting aids, keyframed cel animation with onion skin, sprite stacking, ordered Bayer dithering
+and `.hex` palette import.
 
 Requires Blender 5.2 LTS or newer.
 
@@ -56,7 +57,10 @@ commit clears the masked source and composites the buffer with straight-alpha ov
 pixels lifted first move: a second move or transform carries that same buffer and restores what
 lay beneath it, instead of re-lifting whatever the selection now covers. Painting inside the
 moved footprint drops the carry, so the next lift reads the canvas again. Marching ants trace
-the mask itself, holes included.
+the mask itself, holes included. With a box or ellipse tool active, the selection bounds show
+eight handles: dragging one scales, dragging just outside a corner rotates, dragging inside
+moves. Scale and free rotation resample with RotSprite (three EPX passes, then nearest), so
+edges stay crisp and no new colors appear.
 
 | Action                  | Input                      |
 | ----------------------- | -------------------------- |
@@ -65,9 +69,11 @@ the mask itself, holes included.
 | Add to selection        | Shift+LMB                  |
 | Subtract from selection | Ctrl+LMB                   |
 | Move selection          | LMB drag inside it, or `G` |
+| Lock move to an axis    | Ctrl while moving          |
 | Duplicate and move      | Shift+`D`                  |
 | Rotate freely           | `R`, Ctrl snaps to 15°     |
-| Scale                   | `S`                        |
+| Scale                   | `S`, or drag a handle      |
+| Keep aspect ratio       | Shift while scaling        |
 | Nudge 1 px              | Arrow keys while moving    |
 | Confirm                 | LMB or Enter               |
 | Cancel                  | Esc or RMB                 |
@@ -132,8 +138,10 @@ edited by double-clicking it in the list; the tag is fixed.
 
 _Edit Active Layer_ switches the editor to the layer image for painting; _Show Composite_ switches
 back and recomposites. Edits made straight on the composite canvas are synced into the active layer
-before the next recomposite.
-`H` hides every layer above the active one, or shows them all when none is visible.
+before the next recomposite; _Update Composite_ forces one. A locked layer takes no edits:
+selection transforms, paste and Ctrl erase are refused, remove and merge down are disabled, and
+strokes painted on the composite over it are dropped at the next recomposite. `H` hides every
+layer above the active one, or shows them all when none is visible.
 
 Three toggles under _Edit Active Layer_ help tell the active layer apart while painting on the
 composite: _Dim Below_ darkens the layers below, _Hatch Below_ draws diagonal hatching over them,
@@ -178,6 +186,24 @@ _Export Animation_ writes the composite of every frame in the scene range, eithe
 strip (first frame left) or as a numbered PNG sequence. _Stop Animating_ removes the tracks and
 their keys.
 
+### Sprite Stacking
+
+The Sprite Stacking panel appears once the image has layers. _Preview_ draws the visible layers
+beside the canvas as a stack of slices, bottom layer lowest, in the chosen _Projection_ —
+Isometric (35.26° elevation), Dimetric (30°, the 2:1 pixel-art view) or Trimetric (20° with a
+30° yaw offset) — rotated by _Angle_. _Height_ on the active layer repeats its slice that many
+units. Layers hidden by the eye toggle or by their cel track are left out, as are layers whose
+size differs from the canvas.
+
+_Pixelate_ rasterizes the preview at _Resolution_ texels per canvas pixel (1 matches the canvas)
+and blits it with nearest sampling, so the stack previews as pixel art. _Scale_ shows the stack
+at x1 to x16; _Scale Layers_ upscales each slice but keeps one pixel per height unit between
+them, off scales the whole stack.
+
+_Export Sprite Stack_ writes a horizontal PNG strip of the slices, bottom slice first, each layer
+repeated by its height; _Apply Scale_ (on by default) upscales the slices by the stack scale
+with nearest sampling.
+
 ### Dither
 
 _Blix Dither Gradient_ drags a Bayer-thresholded ramp from the brush primary color — Ctrl snaps
@@ -197,9 +223,11 @@ back the exact source code on an 8-bit image.
 
 ## Preferences
 
-Edit > Preferences > Add-ons > Blix: guide, grid, ruler background, ruler text and mirror axis
-colors, ruler band width, the _Ctrl+LMB Erases_ and _Shift Line Mode_ toggles, and every Blix key
-binding (guide drag plus the tool keymaps) for rebinding.
+Edit > Preferences > Add-ons > Blix: guide, grid, ruler background, ruler text, mirror axis,
+layer dim, hatch and outline, and onion previous and next colors, ruler band width, the _Ctrl+LMB
+Erases_ and _Shift Line Mode_ toggles, and every Blix key binding (guide drag, mirror watch,
+stroke sync, `H`, erase and line mode) for rebinding. Tool keymaps live under the tool in
+Preferences > Keymap > Image > Image Paint.
 
 ## Limits
 
@@ -212,6 +240,8 @@ binding (guide drag plus the tool keymaps) for rebinding.
 - Scrubbing recomposites the canvas without an undo step, and a stroke painted at a frame
   records the cel state first, so undo reverts strokes, not scrubs.
 - Layers with cels cannot be merged down; _Flatten_ bakes the current frame only.
+- The sprite stack preview and export take the layers as they show at the current frame; a
+  layer larger or smaller than the canvas is skipped.
 - Every pixel operation pushes one extra no-op image undo step; that bracket is what makes direct
   pixel writes revertible. Layer operations are single undo steps; a layer property edited in the
   panel costs one extra no-op step.
