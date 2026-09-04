@@ -198,6 +198,11 @@ class BLIX_OT_stack_export(bpy.types.Operator, ExportHelper):
 
     filename_ext = ".png"
     filter_glob: bpy.props.StringProperty(default="*.png", options={"HIDDEN"})
+    apply_scale: bpy.props.BoolProperty(
+        name="Apply Scale",
+        description="Upscale exported slices by the stack scale",
+        default=True,
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -217,7 +222,7 @@ class BLIX_OT_stack_export(bpy.types.Operator, ExportHelper):
         layers.sync_canvas(canvas)
         scene = context.scene
         assert scene is not None
-        scale = props.stack_scale(scene)
+        scale = props.stack_scale(scene) if self.apply_scale else 1
         strip = build_strip(canvas, scale)
         if strip is None:
             self.report({"ERROR"}, "No visible layers")
