@@ -54,6 +54,11 @@ def shift_line() -> bool:
     return True if settings is None else bool(settings.shift_line)
 
 
+def rmb_palette() -> bool:
+    settings = get()
+    return False if settings is None else bool(settings.rmb_palette)
+
+
 def _color_property(name: str, label: str) -> Any:
     return bpy.props.FloatVectorProperty(
         name=label,
@@ -97,6 +102,11 @@ class BlixPreferences(bpy.types.AddonPreferences):
         " LMB paints it",
         default=True,
     )
+    rmb_palette: bpy.props.BoolProperty(
+        name="RMB Opens Palette",
+        description="Right mouse button pops up the palette instead of the color wheel",
+        default=False,
+    )
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
@@ -107,6 +117,7 @@ class BlixPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "ruler_size")
         layout.prop(self, "ctrl_erase")
         layout.prop(self, "shift_line")
+        layout.prop(self, "rmb_palette")
         _draw_keymap(layout, context)
 
 

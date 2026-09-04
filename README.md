@@ -255,12 +255,17 @@ Lines that are not a 6-digit code are skipped and counted in the report. Codes a
 decoded to scene linear, which is how Blender 5 stores brush and swatch colors, so a swatch paints
 back the exact source code on an 8-bit image.
 
+_RMB Opens Palette_ (off by default, in the add-on preferences) makes the right mouse button in
+paint mode pop up the palette under the cursor — palette selector and swatches — instead of
+Blender's color wheel. The stock RMB clone-grab and stencil-control bindings are shadowed while it
+is on.
+
 ## Preferences
 
 Edit > Preferences > Add-ons > Blix: guide, grid, ruler background, ruler text, mirror axis,
 layer dim, hatch and outline, and onion previous and next colors, ruler band width, the _Ctrl+LMB
-Erases_ and _Shift Line Mode_ toggles, and every Blix key binding (guide drag, mirror watch,
-stroke sync, `H`, erase and line mode) for rebinding. Tool keymaps live under the tool in
+Erases_, _Shift Line Mode_ and _RMB Opens Palette_ toggles, and every Blix key binding (guide drag,
+mirror watch, stroke sync, `H`, erase, line mode and palette popup) for rebinding. Tool keymaps live under the tool in
 Preferences > Keymap > Image > Image Paint.
 
 ## Limits

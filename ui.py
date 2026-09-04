@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import bpy
 
-from . import cels, layers, props, references
+from . import cels, layers, palette, props, references
 
 
 def _space(context: bpy.types.Context) -> bpy.types.SpaceImageEditor:
@@ -465,9 +465,7 @@ class BLIX_PT_palette(bpy.types.Panel):
         image_paint = tool_settings.image_paint
         assert image_paint is not None
         layout.operator("blix.palette_import", icon="IMPORT")
-        layout.template_ID(image_paint, "palette", new="palette.new")
-        if image_paint.palette is not None:
-            layout.template_palette(image_paint, "palette")
+        palette.draw_palette(layout, image_paint)
 
 
 _classes = (
