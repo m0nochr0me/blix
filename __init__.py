@@ -16,6 +16,7 @@ from . import (
     overlay,
     palette,
     prefs,
+    references,
     select,
     shapes,
     stacking,
@@ -46,6 +47,7 @@ _modules = (
     dither,
     palette,
     stacking,
+    references,
     ui,
 )
 

@@ -155,6 +155,26 @@ composite: _Dim Below_ darkens the layers below, _Hatch Below_ draws diagonal ha
 and _Outline_ traces the active layer's painted pixels. All three follow the stroke in progress.
 Colors are set in the add-on preferences (_Layer Dim_, _Layer Hatch_, _Layer Outline_).
 
+### References
+
+The `+` in the _References_ panel loads an image or movie file as a reference layer of the
+current image: drawn at its own resolution over or under the painting, never composited or
+painted on, and linked by path rather than packed. A reference larger than the canvas is scaled
+to fit, a smaller one shows at 1:1. References belong to the canvas, so they stay while a layer
+is edited, and they work on plain images without Blix layers.
+
+Each reference has _Opacity_, _Behind_ (draw under the painting: opaque pixels cover it,
+transparent ones reveal it, and _Dim Below_ dims it together with the lower layers), _Offset_
+(center in canvas pixels from the top-left corner), _Scale_ (canvas pixels per reference pixel),
+_Rotation_ and _Flip X_ / _Flip Y_; the list toggles visibility and behind\front. The _Blix
+Reference_ tool transforms the active reference: drag to move (Ctrl locks to an axis, arrows
+nudge one pixel), `G` / `R` / `S` start a move, rotate or scale that a click or Enter confirms
+and Esc cancels, Ctrl snaps the rotation to 15°. The active reference is outlined while the tool
+is active. Every confirmed transform is one undo step.
+
+A movie reference shows one frame: _Frame_ picks it, or _Follow Timeline_ shows the movie frame
+at the scene frame plus _Frame Offset_, so scrubbing cels scrubs the reference for rotoscoping.
+
 ### Animation
 
 _Animate Layers_ in the Animation panel turns the layers of the current canvas into cels for the
@@ -259,6 +279,10 @@ Preferences > Keymap > Image > Image Paint.
 - Every pixel operation pushes one extra no-op image undo step; that bracket is what makes direct
   pixel writes revertible. Layer operations are single undo steps; a layer property edited in the
   panel costs one extra no-op step.
+- References sample nearest-neighbour, so a photo or video minified onto few canvas pixels
+  aliases. Reference files stay linked by path, never packed; each import makes its own image
+  datablock, so two frames of one movie need two imports. Semi-transparent paint over a _Behind_
+  reference blends slightly more opaque, since the painting is redrawn over the reference.
 
 ## License
 

@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import bpy
 
-from . import cels, layers, props
+from . import cels, layers, props, references
 
 
 def _space(context: bpy.types.Context) -> bpy.types.SpaceImageEditor:
@@ -240,6 +240,99 @@ class BLIX_PT_layers(bpy.types.Panel):
         layout.operator("blix.layers_update")
 
 
+class BLIX_UL_references(bpy.types.UIList):
+    def draw_item(
+        self,
+        context: bpy.types.Context | None,
+        layout: bpy.types.UILayout,
+        data: Any | None,
+        item: Any | None,
+        icon: int | None,
+        active_data: Any,
+        active_property: str | None,
+        index: int | None = 0,
+        flt_flag: int | None = 0,
+    ) -> None:
+        assert item is not None
+        row = layout.row(align=True)
+        tag = row.row(align=True)
+        tag.alignment = "LEFT"
+        tag.label(text=f"R{(index if index is not None else 0) + 1}")
+        image = item.image
+        if image is None:
+            row.label(text="missing")
+        else:
+            row.prop(image, "name", text="", emboss=False)
+        scene = context.scene if context is not None else None
+        if image is not None and image.source == "MOVIE" and scene is not None:
+            if item.follow_scene:
+                row.label(text=f"F{references.frame_of(item, scene)}")
+            else:
+                row.prop(item, "frame", text="", emboss=False)
+            row.prop(
+                item,
+                "follow_scene",
+                text="",
+                icon="LINKED" if item.follow_scene else "UNLINKED",
+                emboss=False,
+            )
+        row.prop(
+            item,
+            "behind",
+            text="",
+            icon="IMAGE_BACKGROUND" if item.behind else "IMAGE_REFERENCE",
+            emboss=False,
+        )
+        row.prop(
+            item, "visible", text="", icon="HIDE_OFF" if item.visible else "HIDE_ON", emboss=False
+        )
+
+
+class BLIX_PT_references(bpy.types.Panel):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Blix"
+    bl_label = "References"
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        assert layout is not None
+        image = _space(context).image
+        if image is None:
+            return
+        canvas = references.owner(image)
+        row = layout.row()
+        row.template_list(
+            "BLIX_UL_references",
+            "",
+            canvas,
+            "blix_references",
+            canvas,
+            "blix_references_index",
+            rows=3,
+        )
+        col = row.column(align=True)
+        col.operator("blix.reference_import", text="", icon="ADD")
+        col.operator("blix.reference_remove", text="", icon="REMOVE")
+        reference = references.active(canvas)
+        if reference is None:
+            return
+        layout.prop(reference, "opacity")
+        layout.prop(reference, "behind")
+        layout.prop(reference, "offset")
+        layout.prop(reference, "scale")
+        layout.prop(reference, "rotation")
+        row = layout.row(align=True)
+        row.prop(reference, "flip_x", toggle=True)
+        row.prop(reference, "flip_y", toggle=True)
+        if reference.image is None or reference.image.source != "MOVIE":
+            return
+        layout.prop(reference, "follow_scene")
+        row = layout.row(align=True)
+        row.prop(reference, "frame_offset" if reference.follow_scene else "frame")
+        row.label(text=f"/ {reference.image.frame_duration}")
+
+
 class BLIX_PT_cels(bpy.types.Panel):
     bl_space_type = "IMAGE_EDITOR"
     bl_region_type = "UI"
@@ -386,6 +479,8 @@ _classes = (
     BLIX_PT_mirror,
     BLIX_UL_layers,
     BLIX_PT_layers,
+    BLIX_UL_references,
+    BLIX_PT_references,
     BLIX_PT_cels,
     BLIX_PT_stacking,
     BLIX_PT_dither,

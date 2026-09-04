@@ -29,6 +29,18 @@ def set_layers_index(image: bpy.types.Image, value: int) -> None:
     cast(Any, image).blix_layers_index = value
 
 
+def references(image: bpy.types.Image) -> Any:
+    return cast(Any, image).blix_references
+
+
+def references_index(image: bpy.types.Image) -> int:
+    return cast(Any, image).blix_references_index
+
+
+def set_references_index(image: bpy.types.Image, value: int) -> None:
+    cast(Any, image).blix_references_index = value
+
+
 def canvas_of(image: bpy.types.Image) -> bpy.types.Image | None:
     return cast(Any, image).blix_canvas
 
