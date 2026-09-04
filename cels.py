@@ -380,22 +380,25 @@ def _retarget_editors(
                     space.image = image
 
 
-def _follow(canvas: bpy.types.Image) -> None:
+def _shown_cel(canvas: bpy.types.Image, layer: Any) -> bool:
     from . import layers
 
+    return bool(layer.cel) and layer.image is not None and layers.shown(canvas, layer)
+
+
+def _follow(canvas: bpy.types.Image) -> None:
+    """Keep the active layer while it is a shown cel, else activate the topmost shown cel."""
     stack = props.layers(canvas)
+    active = props.layers_index(canvas)
+    if 0 <= active < len(stack) and _shown_cel(canvas, stack[active]):
+        _retarget_editors(canvas, stack[active].image)
+        return
     index = next(
-        (
-            position
-            for position, layer in enumerate(stack)
-            if layer.cel and layer.image is not None and layers.shown(canvas, layer)
-        ),
-        None,
+        (position for position, layer in enumerate(stack) if _shown_cel(canvas, layer)), None
     )
     if index is None:
         return
-    if index != props.layers_index(canvas):
-        props.set_layers_index(canvas, index)
+    props.set_layers_index(canvas, index)
     _retarget_editors(canvas, stack[index].image)
 
 
@@ -404,8 +407,6 @@ def _apply(scene: bpy.types.Scene, canvas: bpy.types.Image) -> None:
 
     layers.sync_canvas(canvas)
     _swap_slots(scene, canvas)
-    if props.cel_follow(scene):
-        _follow(canvas)
     layers._heal(canvas)
 
 
@@ -418,6 +419,8 @@ def refresh(scene: bpy.types.Scene) -> None:
         if len(props.layers(canvas)):
             _sanitize(scene, canvas)
             _apply(scene, canvas)
+            if props.cel_follow(scene):
+                _follow(canvas)
     if canvases:
         overlay.tag_redraw(bpy.context)
 
