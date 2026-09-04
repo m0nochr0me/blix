@@ -340,7 +340,10 @@ class BLIX_PT_dither(bpy.types.Panel):
         assert layout is not None
         assert scene is not None
         col = layout.column()
-        col.prop(scene, "blix_dither_size")
+        col.prop(scene, "blix_dither_pattern")
+        if props.dither_pattern(scene) == "CUSTOM":
+            col.prop(scene, "blix_dither_custom")
+        col.prop(scene, "blix_dither_gradient")
         col.prop(scene, "blix_dither_brush_size")
         col.prop(scene, "blix_dither_density")
         col.prop(scene, "blix_dither_transparent")

@@ -3,7 +3,7 @@
 Pixel-art editing tools for the Blender image editor: pixel grid, rulers and guides, box,
 ellipse, lasso, brush and wand selection with boolean modes, RotSprite transforms and a
 clipboard, shape drawing, mirror symmetry, brush line mode and erase, a layer stack with
-painting aids, keyframed cel animation with onion skin, sprite stacking, ordered Bayer dithering
+painting aids, keyframed cel animation with onion skin, sprite stacking, ordered and error-diffusion dithering
 and `.hex` palette import.
 
 Requires Blender 5.2 LTS or newer.
@@ -206,12 +206,19 @@ with nearest sampling.
 
 ### Dither
 
-_Blix Dither Gradient_ drags a Bayer-thresholded ramp from the brush primary color — Ctrl snaps
-the direction to 45°. _Blix Dither Brush_ paints a Bayer-masked stamp. With _Transparent_ on (the
+_Blix Dither Gradient_ drags a dithered ramp from the brush primary color — Ctrl snaps the
+direction to 45°. _Blix Dither Brush_ paints a pattern-masked stamp. With _Transparent_ on (the
 default) the ramp fades to transparency, transparent pixels leave the canvas untouched, and a
 Ctrl stroke of the brush erases with the pattern; with it off the secondary color takes
-transparency's place. Both tools honor an active selection as their bounds. Pattern size (2/4/8),
-brush size, density and the _Transparent_ toggle are in the Dither panel.
+transparency's place. Both tools honor an active selection as their bounds.
+
+The Dither panel picks the _Pattern_: Bayer 2x2/4x4/8x8, Blue Noise (a 64x64 void-and-cluster
+tile), horizontal, vertical and diagonal lines, halftone dots on a square or offset grid, or
+_Custom_ — any image up to 256x256 used as a tile, darker pixels painting first, so a black and
+white tile reproduces exactly at a density equal to its black fraction. Patterns are anchored to
+image coordinates, so strokes and fills line up. _Gradient_ switches the gradient tool from the
+ordered pattern to Floyd-Steinberg or Atkinson error diffusion (the brush always uses the
+pattern). Brush size, density and the _Transparent_ toggle sit in the same panel.
 
 ### Palette
 

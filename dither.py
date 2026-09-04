@@ -1,43 +1,51 @@
-"""Ordered Bayer dithering: gradient fill and pattern-masked brush, as paint-mode tools."""
+"""Ordered and error-diffusion dithering: gradient fill and pattern-masked brush, as paint tools."""
 
 import math
-from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
 import bpy
 import numpy as np
 
-from . import mirror, overlay, paint, props, select, undo
+from . import mirror, overlay, paint, patterns, props, select, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
 
 SNAP_ANGLE = math.pi / 4
 TRANSPARENT = np.zeros(4, dtype=np.float32)
+CUSTOM_MAX = 256
+LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+GRADIENT_TAPS: dict[str, patterns.Taps | None] = {
+    "PATTERN": None,
+    "FLOYD_STEINBERG": patterns.FLOYD_STEINBERG,
+    "ATKINSON": patterns.ATKINSON,
+}
 
 preview = select.Preview()
 
 
-@cache
-def bayer_matrix(n: int) -> np.ndarray:
-    if n == 2:
-        return np.array([[0, 2], [3, 1]], dtype=np.int64)
-    half = bayer_matrix(n // 2)
-    return np.block([[4 * half, 4 * half + 2], [4 * half + 3, 4 * half + 1]])
+def custom_thresholds(image: bpy.types.Image) -> np.ndarray | None:
+    width, height = image.size
+    if not 0 < width <= CUSTOM_MAX or not 0 < height <= CUSTOM_MAX:
+        return None
+    return patterns.ranked(select.read_pixels(image)[:, :, :3] @ LUMA)
 
 
-@cache
-def bayer_thresholds(n: int) -> np.ndarray:
-    matrix = bayer_matrix(n)
-    return ((matrix + 0.5) / (n * n)).astype(np.float32)
+def pattern_thresholds(scene: bpy.types.Scene) -> np.ndarray | None:
+    pattern = props.dither_pattern(scene)
+    if pattern != "CUSTOM":
+        return patterns.TILES[pattern]()
+    image = props.dither_custom(scene)
+    return None if image is None else custom_thresholds(image)
 
 
-def _tiled_thresholds(rect: select.Rect, n: int) -> np.ndarray:
-    x0, y0, x1, y1 = rect
-    thresholds = bayer_thresholds(n)
-    ys = np.arange(y0, y1) % n
-    xs = np.arange(x0, x1) % n
-    return thresholds[ys[:, None], xs[None, :]]
+def _resolve_pattern(operator: bpy.types.Operator, scene: bpy.types.Scene) -> np.ndarray | None:
+    thresholds = pattern_thresholds(scene)
+    if thresholds is None:
+        operator.report(
+            {"ERROR"}, f"Custom pattern needs an image up to {CUSTOM_MAX}x{CUSTOM_MAX}"
+        )
+    return thresholds
 
 
 def dither_region(
@@ -46,7 +54,8 @@ def dither_region(
     end: tuple[float, float],
     color_a: np.ndarray,
     color_b: np.ndarray,
-    n: int,
+    thresholds: np.ndarray | None,
+    taps: patterns.Taps | None,
 ) -> np.ndarray:
     x0, y0, x1, y1 = rect
     dx, dy = end[0] - start[0], end[1] - start[1]
@@ -56,8 +65,12 @@ def dither_region(
         t = np.zeros((y1 - y0, x1 - x0), dtype=np.float32)
     else:
         t = ((xx + 0.5 - start[0]) * dx + (yy + 0.5 - start[1]) * dy) / length_sq
-        t = np.clip(t, 0.0, 1.0)
-    use_b = t >= _tiled_thresholds(rect, n)
+        t = np.clip(t, 0.0, 1.0).astype(np.float32)
+    if taps is not None:
+        use_b = patterns.diffuse(t, taps)
+    else:
+        assert thresholds is not None
+        use_b = t >= patterns.tile(rect, thresholds)
     return np.where(use_b[:, :, None], color_b, color_a).astype(np.float32)
 
 
@@ -67,7 +80,7 @@ def dither_stamp(
     radius: float,
     color: np.ndarray,
     density: float,
-    n: int,
+    thresholds: np.ndarray,
     clip: select.Rect,
     clip_mask: np.ndarray | None = None,
     written: np.ndarray | None = None,
@@ -81,7 +94,7 @@ def dither_stamp(
         return
     yy, xx = np.mgrid[y0:y1, x0:x1]
     inside = (xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 <= radius * radius
-    mask = inside & (_tiled_thresholds((x0, y0, x1, y1), n) < density)
+    mask = inside & (patterns.tile((x0, y0, x1, y1), thresholds) < density)
     if clip_mask is not None:
         mask &= clip_mask[y0:y1, x0:x1]
     region = pixels[y0:y1, x0:x1]
@@ -129,6 +142,8 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
 
     _start: tuple[float, float]
     _end: tuple[float, float]
+    _thresholds: np.ndarray | None
+    _taps: patterns.Taps | None
 
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
@@ -136,6 +151,14 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
         image = select.edit_image(context)
         if image is None or image.size[0] == 0 or image.size[1] == 0:
             return {"PASS_THROUGH"}
+        scene = context.scene
+        assert scene is not None
+        self._taps = GRADIENT_TAPS[props.dither_gradient(scene)]
+        self._thresholds = None
+        if self._taps is None:
+            self._thresholds = _resolve_pattern(self, scene)
+            if self._thresholds is None:
+                return {"CANCELLED"}
         region = context.region
         assert region is not None
         self._start = select.mouse_pixel(region, image, event)
@@ -146,14 +169,15 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
         window_manager.modal_handler_add(self)
         return {"RUNNING_MODAL"}
 
-    def _update_preview(self, context: bpy.types.Context, image: bpy.types.Image) -> None:
-        scene = context.scene
-        assert scene is not None
-        rect, clip_mask = _target_clip(image)
+    def _buffer(self, context: bpy.types.Context, rect: select.Rect) -> np.ndarray:
         color_a, color_b = _gradient_colors(context)
-        buffer = dither_region(
-            rect, self._start, self._end, color_a, color_b, props.dither_size(scene)
+        return dither_region(
+            rect, self._start, self._end, color_a, color_b, self._thresholds, self._taps
         )
+
+    def _update_preview(self, context: bpy.types.Context, image: bpy.types.Image) -> None:
+        rect, clip_mask = _target_clip(image)
+        buffer = self._buffer(context, rect)
         if clip_mask is not None:
             buffer[~clip_mask[rect[1] : rect[3], rect[0] : rect[2]]] = 0.0
         preview.set(image, rect, buffer)
@@ -193,15 +217,9 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
     def _commit(self, context: bpy.types.Context, image: bpy.types.Image) -> None:
-        scene = context.scene
-        assert scene is not None
-        color_a, color_b = _gradient_colors(context)
         rect, clip_mask = _target_clip(image)
         pixels = select.read_pixels(image)
-        buffer = dither_region(
-            rect, self._start, self._end, color_a, color_b, props.dither_size(scene)
-        )
-        written = _apply_buffer(pixels, rect, buffer, clip_mask)
+        written = _apply_buffer(pixels, rect, self._buffer(context, rect), clip_mask)
         undo.record(context, image)
         select.write_pixels(image, pixels)
         preview.clear()
@@ -210,7 +228,7 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
 
 
 class BLIX_OT_dither_stroke(bpy.types.Operator):
-    """Paint with a Bayer-masked brush; Ctrl paints the secondary color, Esc cancels"""
+    """Paint with a pattern-masked brush; Ctrl paints the secondary color, Esc cancels"""
 
     bl_idname = "blix.dither_stroke"
     bl_label = "Dither Stroke"
@@ -220,6 +238,7 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
     _written: np.ndarray
     _last: tuple[float, float]
     _color: np.ndarray
+    _thresholds: np.ndarray
 
     def invoke(
         self, context: bpy.types.Context, event: bpy.types.Event
@@ -227,14 +246,18 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
         image = select.edit_image(context)
         if image is None or image.size[0] == 0 or image.size[1] == 0:
             return {"PASS_THROUGH"}
+        scene = context.scene
+        assert scene is not None
+        thresholds = _resolve_pattern(self, scene)
+        if thresholds is None:
+            return {"CANCELLED"}
+        self._thresholds = thresholds
         region = context.region
         assert region is not None
         self._snapshot = select.read_pixels(image).copy()
         self._written = np.zeros(self._snapshot.shape[:2], dtype=bool)
         primary, secondary = paint.brush_colors(context)
         if event.ctrl:
-            scene = context.scene
-            assert scene is not None
             self._color = TRANSPARENT if props.dither_transparent(scene) else secondary
         else:
             self._color = primary
@@ -253,7 +276,6 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
         assert scene is not None
         radius = props.dither_brush_size(scene) / 2
         density = props.dither_density(scene)
-        n = props.dither_size(scene)
         clip, clip_mask = _target_clip(image)
         size = (image.size[0], image.size[1])
         axes = mirror.enabled(scene)
@@ -268,7 +290,15 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
             )
             for stamp in mirror.centers(center, size, *axes):
                 dither_stamp(
-                    pixels, stamp, radius, self._color, density, n, clip, clip_mask, self._written
+                    pixels,
+                    stamp,
+                    radius,
+                    self._color,
+                    density,
+                    self._thresholds,
+                    clip,
+                    clip_mask,
+                    self._written,
                 )
         select.write_pixels(image, pixels)
         self._last = point
@@ -313,7 +343,7 @@ class BLIX_TOOL_dither_brush(bpy.types.WorkSpaceTool):
     bl_context_mode = "PAINT"
     bl_idname = "blix.dither_brush_tool"
     bl_label = "Blix Dither Brush"
-    bl_description = "Paint with a Bayer-masked brush"
+    bl_description = "Paint with a pattern-masked brush"
     bl_icon = "brush.draw"
     bl_widget = None
     bl_keymap = (
@@ -329,10 +359,37 @@ def register() -> None:
     for cls in _classes:
         bpy.utils.register_class(cls)
     scene_cls = cast(Any, bpy.types.Scene)
-    scene_cls.blix_dither_size = bpy.props.EnumProperty(
+    scene_cls.blix_dither_pattern = bpy.props.EnumProperty(
         name="Pattern",
-        items=(("2", "Bayer 2x2", ""), ("4", "Bayer 4x4", ""), ("8", "Bayer 8x8", "")),
-        default="4",
+        items=(
+            ("BAYER2", "Bayer 2x2", ""),
+            ("BAYER4", "Bayer 4x4", ""),
+            ("BAYER8", "Bayer 8x8", ""),
+            ("BLUE", "Blue Noise", ""),
+            None,
+            ("LINES_H", "Horizontal Lines", ""),
+            ("LINES_V", "Vertical Lines", ""),
+            ("DIAGONAL", "Diagonal Lines", ""),
+            ("ANTIDIAGONAL", "Antidiagonal Lines", ""),
+            None,
+            ("DOTS", "Dots", ""),
+            ("DOTS_OFFSET", "Offset Dots", ""),
+            None,
+            ("CUSTOM", "Custom", "Tile from an image; dark pixels paint first"),
+        ),
+        default="BAYER4",
+    )
+    scene_cls.blix_dither_custom = bpy.props.PointerProperty(
+        type=bpy.types.Image, name="Tile", description="Image used as the custom dither tile"
+    )
+    scene_cls.blix_dither_gradient = bpy.props.EnumProperty(
+        name="Gradient",
+        items=(
+            ("PATTERN", "Pattern", "Ordered dither with the selected pattern"),
+            ("FLOYD_STEINBERG", "Floyd-Steinberg", "Error diffusion"),
+            ("ATKINSON", "Atkinson", "Error diffusion, lighter with more contrast"),
+        ),
+        default="PATTERN",
     )
     scene_cls.blix_dither_density = bpy.props.FloatProperty(
         name="Density", default=0.5, min=0.0, max=1.0
@@ -358,7 +415,9 @@ def unregister() -> None:
     del scene_cls.blix_dither_transparent
     del scene_cls.blix_dither_brush_size
     del scene_cls.blix_dither_density
-    del scene_cls.blix_dither_size
+    del scene_cls.blix_dither_gradient
+    del scene_cls.blix_dither_custom
+    del scene_cls.blix_dither_pattern
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)
     preview.clear()

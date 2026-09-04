@@ -89,8 +89,16 @@ def shape_hex_pointy(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_shape_hex_pointy
 
 
-def dither_size(scene: bpy.types.Scene) -> int:
-    return int(cast(Any, scene).blix_dither_size)
+def dither_pattern(scene: bpy.types.Scene) -> str:
+    return cast(Any, scene).blix_dither_pattern
+
+
+def dither_custom(scene: bpy.types.Scene) -> bpy.types.Image | None:
+    return cast(Any, scene).blix_dither_custom
+
+
+def dither_gradient(scene: bpy.types.Scene) -> str:
+    return cast(Any, scene).blix_dither_gradient
 
 
 def dither_density(scene: bpy.types.Scene) -> float:
