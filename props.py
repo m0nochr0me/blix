@@ -153,6 +153,14 @@ def stack_scale_layers(scene: bpy.types.Scene) -> bool:
     return cast(Any, scene).blix_stack_scale_layers
 
 
+def stack_noise(scene: bpy.types.Scene) -> float:
+    return cast(Any, scene).blix_stack_noise
+
+
+def stack_grain(scene: bpy.types.Scene) -> int:
+    return cast(Any, scene).blix_stack_grain
+
+
 def cels(scene: bpy.types.Scene) -> Any:
     return cast(Any, scene).blix_cels
 

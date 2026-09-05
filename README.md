@@ -256,9 +256,14 @@ and blits it with nearest sampling, so the stack previews as pixel art. _Scale_ 
 at x1 to x16; _Scale Layers_ upscales each slice but keeps one pixel per height unit between
 them, off scales the whole stack.
 
+_Noise_ adds uniform brightness noise to every slice so repeated layers stop reading as flat
+bands; each slice gets its own pattern, hues stay put and transparent pixels are left alone.
+_Grain_ sets the noise cell size in canvas pixels. Zero noise turns the effect off.
+
 _Export Sprite Stack_ writes a horizontal PNG strip of the slices, bottom slice first, each layer
 repeated by its height; _Apply Scale_ (on by default) upscales the slices by the stack scale
-with nearest sampling.
+with nearest sampling and _Apply Noise_ (on by default) bakes the same noise pattern the preview
+shows into the slices.
 
 ### Dither
 

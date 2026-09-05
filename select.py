@@ -639,14 +639,19 @@ def draw_texture_quad(
     tint: tuple[float, float, float, float] = NO_TINT,
 ) -> None:
     """Draw texture on quad; srgb decodes sRGB-byte texels, tint mixes rgb toward it by alpha."""
-    quad = [corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]]
-    uvs = [(0, 0), (1, 0), (1, 1), (0, 0), (1, 1), (0, 1)]
     shader = _get_preview_shader()
-    batch = batch_for_shader(shader, "TRIS", {"pos": quad, "uv": uvs})
-    shader.uniform_sampler("image", texture)
     shader.uniform_bool("srgb", [srgb])
     shader.uniform_float("opacity", opacity)
     shader.uniform_float("tint", tint)
+    draw_quad(shader, corners, texture)
+
+
+def draw_quad(shader: gpu.types.GPUShader, corners: Quad, texture: gpu.types.GPUTexture) -> None:
+    """Draw texture on quad with a shader taking pos, uv, image and ModelViewProjectionMatrix."""
+    quad = [corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]]
+    uvs = [(0, 0), (1, 0), (1, 1), (0, 0), (1, 1), (0, 1)]
+    batch = batch_for_shader(shader, "TRIS", {"pos": quad, "uv": uvs})
+    shader.uniform_sampler("image", texture)
     matrix = gpu.matrix.get_projection_matrix() @ gpu.matrix.get_model_view_matrix()
     shader.uniform_float("ModelViewProjectionMatrix", cast(Any, matrix))
     batch.draw(shader)
