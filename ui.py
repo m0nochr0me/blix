@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import bpy
 
-from . import cels, layers, palette, props, references
+from . import cels, layers, palette, props, references, text
 
 
 def _space(context: bpy.types.Context) -> bpy.types.SpaceImageEditor:
@@ -172,7 +172,7 @@ class BLIX_UL_layers(bpy.types.UIList):
         tag_text = layers.layer_tag(item)
         if slot is not None:
             tag_text = f"{tag_text} {layers.slot_tag(slot)}"
-        tag.label(text=tag_text)
+        tag.label(text=tag_text, icon="FONT_DATA" if item.is_text else "NONE")
         row.prop(item, "label", text="", emboss=False)
         canvas = cast(bpy.types.Image, data)
         scene = context.scene if context is not None else None
@@ -239,6 +239,29 @@ class BLIX_PT_layers(bpy.types.Panel):
         row.operator("blix.layer_merge_down", text="Merge Down")
         row.operator("blix.layer_flatten", text="Flatten")
         layout.operator("blix.layers_update")
+
+
+class BLIX_PT_text(bpy.types.Panel):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Blix"
+    bl_label = "Text"
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return text.active_text(context) is not None
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        found = text.active_text(context)
+        assert layout is not None and found is not None
+        layer = found[1]
+        layout.prop(layer, "text")
+        layout.template_ID(layer, "font", open="font.open")
+        layout.prop(layer, "text_size")
+        layout.prop(layer, "text_color")
+        layout.prop(layer, "text_origin")
+        layout.operator("blix.text_rasterize")
 
 
 class BLIX_UL_references(bpy.types.UIList):
@@ -478,6 +501,7 @@ _classes = (
     BLIX_PT_mirror,
     BLIX_UL_layers,
     BLIX_PT_layers,
+    BLIX_PT_text,
     BLIX_UL_references,
     BLIX_PT_references,
     BLIX_PT_cels,

@@ -87,7 +87,7 @@ class BLIX_OT_ctrl_erase(bpy.types.Operator):
         target = image
         if self._canvas is not None:
             layer = layers.active_layer(self._canvas)
-            if layer is None or layer.image is None or layer.lock:
+            if layer is None or layer.image is None or layers.locked(layer):
                 return {"CANCELLED"}
             if tuple(layer.image.size) != tuple(self._canvas.size):
                 return {"CANCELLED"}

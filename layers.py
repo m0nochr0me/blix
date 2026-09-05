@@ -228,7 +228,7 @@ def sync_canvas(canvas: bpy.types.Image, written: np.ndarray | None = None) -> N
     mask = _changed_mask(current, cached, written)
     if not mask.any():
         return
-    if target is None or target.image is None or target.lock:
+    if target is None or target.image is None or locked(target):
         return
     if tuple(target.image.size) != (current.shape[1], current.shape[0]):
         return
@@ -278,6 +278,14 @@ def _stack_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) ->
     overlay.tag_redraw(context)
 
 
+def _text_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
+    from . import text
+
+    layer = cast(Any, self)
+    if layer.is_text:
+        text.refresh(cast(bpy.types.Image, self.id_data), layer)
+
+
 def _active_changed(self: bpy.types.Image, context: bpy.types.Context) -> None:
     if len(props.layers(self)):
         sync_canvas(self)
@@ -318,6 +326,38 @@ class BlixLayer(bpy.types.PropertyGroup):
         name="Cel", description="Treat this layer as an animation frame", default=True
     )
     cels: bpy.props.CollectionProperty(type=BlixCelSlot)
+    is_text: bpy.props.BoolProperty(name="Text Layer", default=False)
+    text: bpy.props.StringProperty(name="Text", update=_text_changed)
+    font: bpy.props.PointerProperty(type=bpy.types.VectorFont, name="Font", update=_text_changed)
+    text_size: bpy.props.IntProperty(
+        name="Size",
+        description="Font size in canvas pixels",
+        default=16,
+        min=1,
+        soft_max=256,
+        update=_text_changed,
+    )
+    text_color: bpy.props.FloatVectorProperty(
+        name="Color",
+        subtype="COLOR_GAMMA",
+        size=4,
+        min=0.0,
+        max=1.0,
+        default=(1.0, 1.0, 1.0, 1.0),
+        update=_text_changed,
+    )
+    text_origin: bpy.props.IntVectorProperty(
+        name="Origin",
+        description="Baseline start in canvas pixels from the top-left corner",
+        size=2,
+        subtype="XYZ",
+        update=_text_changed,
+    )
+
+
+def locked(layer: Any) -> bool:
+    """Layers that take no pixel edits: locked ones, and text layers until rasterized."""
+    return bool(layer.lock or layer.is_text)
 
 
 def layer_tag(layer: Any) -> str:
@@ -453,6 +493,12 @@ def duplicate_layer(canvas: bpy.types.Image, index: int) -> None:
             continue
         name = f"{layer_tag(layer)}.{slot_tag(slot)}"
         clone.image = _clone_image(canvas, name, select.read_pixels(slot.image))
+    layer.text = source.text
+    layer.font = source.font
+    layer.text_size = source.text_size
+    layer.text_color = source.text_color
+    layer.text_origin = source.text_origin
+    layer.is_text = source.is_text
     stack.move(len(stack) - 1, index)
     props.set_layers_index(canvas, index)
     composite(canvas)
@@ -842,7 +888,7 @@ class BLIX_OT_layer_merge_down(_CanvasOperator):
         if len(stack[index].cels) or len(stack[index + 1].cels):
             cls.poll_message_set("Layers with cels cannot be merged")
             return False
-        return not stack[index].lock and not stack[index + 1].lock
+        return not stack[index].lock and not locked(stack[index + 1])
 
     def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
         canvas = resolve_canvas(context)

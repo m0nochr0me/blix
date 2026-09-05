@@ -20,6 +20,7 @@ from . import (
     select,
     shapes,
     stacking,
+    text,
     transform,
     ui,
     undo,
@@ -48,6 +49,7 @@ _modules = (
     palette,
     stacking,
     references,
+    text,
     ui,
 )
 

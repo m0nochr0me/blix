@@ -122,7 +122,7 @@ def target_locked(image: bpy.types.Image) -> bool:
     if len(props.layers(image)) == 0:
         return False
     layer = layers.active_layer(image)
-    return layer is None or layer.image is None or layer.lock
+    return layer is None or layer.image is None or layers.locked(layer)
 
 
 def read_pixels(image: bpy.types.Image) -> np.ndarray:

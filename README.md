@@ -3,8 +3,8 @@
 Pixel-art editing tools for the Blender image editor: pixel grid, rulers and guides, box,
 ellipse, lasso, brush and wand selection with boolean modes, RotSprite transforms and a
 clipboard, shape drawing, mirror symmetry, brush line mode and erase, a layer stack with
-painting aids, keyframed cel animation with onion skin, sprite stacking, ordered and error-diffusion dithering
-and `.hex` palette import.
+painting aids, editable text layers, keyframed cel animation with onion skin, sprite stacking,
+ordered and error-diffusion dithering and `.hex` palette import.
 
 Requires Blender 5.2 LTS or newer.
 
@@ -159,6 +159,31 @@ composite: _Dim Below_ darkens the layers below, _Hatch Below_ draws diagonal ha
 and _Outline_ traces the active layer's painted pixels. All three follow the stroke in progress.
 Colors are set in the add-on preferences (_Layer Dim_, _Layer Hatch_, _Layer Outline_).
 
+### Text
+
+The _Blix Text_ tool adds text layers. Click on the canvas: a dialog takes the text and its size
+in pixels, the click point becomes the left end of the baseline, and a new layer named after the
+text lands above the active one, colored with the brush primary color. An image without layers
+gets a layer stack first. The layer stays live: the _Text_ panel edits the text, font, size, color
+and origin, and every edit rerenders the layer. The font is a Blender font datablock, so the folder
+button loads any TTF, OTF or WOFF2 file and text objects can share it; with none set, the bundled
+DejaVu Sans Mono renders. Glyphs render monochrome, so a pixel font at its native size comes out
+exact and no anti-aliasing colors appear. Text is a single line.
+
+A text layer takes no paint, erase or selection edits until _Rasterize Text_ turns it into a
+plain layer, and a layer cannot be merged down into it. The active text layer is outlined while
+the tool is active. Add, move and rasterize are one undo step each; a panel edit costs one step
+plus the usual no-op image step.
+
+| Action               | Input                                    |
+| -------------------- | ---------------------------------------- |
+| Add text layer       | LMB click on the canvas                  |
+| Move text layer      | LMB drag on the active text layer, `G`   |
+| Lock move to an axis | Ctrl while moving                        |
+| Nudge 1 px           | Arrow keys while moving                  |
+| Confirm              | LMB or Enter                             |
+| Cancel               | Esc or RMB                               |
+
 ### References
 
 The `+` in the _References_ panel loads an image or movie file as a reference layer of the
@@ -280,6 +305,8 @@ Preferences > Keymap > Image > Image Paint.
   strokes works the same way — pixels outside the mask flash painted for a frame before the watch
   restores them. The dither gradient is not mirrored; it already fills its whole target region.
 - Layer images are packed as PNG, so layer storage is 8 bit per channel.
+- Text layers hold one line, render without anti-aliasing and reload their font by path; a
+  font packed into the .blend renders from a temporary copy.
 - Scrubbing recomposites the canvas without an undo step, and a stroke painted at a frame
   records the cel state first, so undo reverts strokes, not scrubs.
 - Layers with cels cannot be merged down; _Flatten_ bakes the current frame only.
