@@ -24,6 +24,7 @@ from . import (
     transform,
     ui,
     undo,
+    voxel,
 )
 
 if "_modules" in locals():
@@ -48,6 +49,7 @@ _modules = (
     dither,
     palette,
     stacking,
+    voxel,
     references,
     text,
     ui,

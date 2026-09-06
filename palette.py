@@ -33,6 +33,25 @@ def parse_hex(text: str) -> tuple[list[np.ndarray], int]:
     return colors, skipped
 
 
+def active(context: bpy.types.Context) -> bpy.types.Palette | None:
+    tool_settings = context.tool_settings
+    if tool_settings is None or tool_settings.image_paint is None:
+        return None
+    return tool_settings.image_paint.palette
+
+
+def swatches(palette: bpy.types.Palette) -> np.ndarray:
+    """Palette colours as sRGB rows, the space byte image pixels are stored in."""
+    colors = [list(cast(Any, color).color) for color in palette.colors]
+    return paint.srgb_encode(np.array(colors, dtype=np.float32).reshape(-1, 3))
+
+
+def nearest(colors: np.ndarray, swatches: np.ndarray) -> np.ndarray:
+    """Index of the closest swatch per colour row, Euclidean distance in sRGB."""
+    distance = ((colors[:, None, :] - swatches[None, :, :]) ** 2).sum(axis=2)
+    return distance.argmin(axis=1)
+
+
 class BLIX_OT_palette_import(bpy.types.Operator, ImportHelper):
     """Load a .hex palette file: one sRGB hex code per line"""
 

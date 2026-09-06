@@ -161,6 +161,18 @@ def stack_grain(scene: bpy.types.Scene) -> int:
     return cast(Any, scene).blix_stack_grain
 
 
+def voxel_object(scene: bpy.types.Scene) -> bpy.types.Object | None:
+    return cast(Any, scene).blix_voxel_object
+
+
+def voxel_resolution(scene: bpy.types.Scene) -> int:
+    return int(cast(Any, scene).blix_voxel_resolution)
+
+
+def voxel_scale(scene: bpy.types.Scene) -> float:
+    return float(cast(Any, scene).blix_voxel_scale)
+
+
 def cels(scene: bpy.types.Scene) -> Any:
     return cast(Any, scene).blix_cels
 

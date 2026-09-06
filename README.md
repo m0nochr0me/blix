@@ -3,8 +3,9 @@
 Pixel-art editing tools for the Blender image editor: pixel grid, rulers and guides, box,
 ellipse, lasso, brush and wand selection with boolean modes, RotSprite transforms and a
 clipboard, shape drawing, mirror symmetry, brush line mode and erase, a layer stack with
-painting aids, editable text layers, keyframed cel animation with onion skin, sprite stacking,
-ordered and error-diffusion dithering and `.hex` palette import.
+painting aids, editable text layers, keyframed cel animation with onion skin, sprite stacking
+with mesh slicing and voxel mesh export, ordered and error-diffusion dithering and `.hex`
+palette import.
 
 Requires Blender 5.2 LTS or newer.
 
@@ -265,6 +266,28 @@ repeated by its height; _Apply Scale_ (on by default) upscales the slices by the
 with nearest sampling and _Apply Noise_ (on by default) bakes the same noise pattern the preview
 shows into the slices.
 
+### Voxel Mesh
+
+The Voxel Mesh panel bridges the layer stack and scene meshes. _Slice Mesh_ voxelizes the
+_Mesh_ object at _Resolution_ pixels along its longest XY side with cubic voxels and writes one
+layer per slice, bottom slice lowest, into a new square canvas named after the object. Each
+face's colour comes from its material — the Principled _Base Color_ when it is not textured,
+else the viewport colour — snapped to the nearest swatch of the active palette; with no palette
+the material colours are kept. Modifiers are applied and the object transform is baked, so the
+canvas shows the mesh as it stands in the scene. Only closed surfaces fill; overlapping and
+touching parts are fine, open meshes leave gaps.
+
+_Build Mesh_ turns the visible stack, heights included and blend modes ignored like the export,
+into a mesh object with one quad per exposed voxel face and nothing inside; coplanar faces of one
+colour merge into single n-gons. Every face is UV-mapped to a texel of a palette texture — the
+active palette when one is loaded, else the colours found in the stack — wired into a Principled
+material with nearest sampling, so the mesh shades as pixel art in the viewport and renders.
+_Voxel Size_ sets the edge of one canvas pixel in scene units; the object sits centred on X and Y
+with its base at Z 0.
+
+_Import Sprite Stack_ loads a horizontal strip PNG, as written by _Export Sprite Stack_, into a
+new canvas with one layer per slice; _Slice Width_ (0 uses the strip height) splits the strip.
+
 ### Dither
 
 _Blix Dither Gradient_ drags a dithered ramp from the brush primary color — Ctrl snaps the
@@ -320,6 +343,8 @@ Preferences > Keymap > Image > Image Paint.
 - Every pixel operation pushes one extra no-op image undo step; that bracket is what makes direct
   pixel writes revertible. Layer operations are single undo steps; a layer property edited in the
   panel costs one extra no-op step.
+- Slicing reads material colours only, so a textured mesh slices in its viewport colour; UV
+  texture sampling is not implemented.
 - References sample nearest-neighbour, so a photo or video minified onto few canvas pixels
   aliases. Reference files stay linked by path, never packed; each import makes its own image
   datablock, so two frames of one movie need two imports. Semi-transparent paint over a _Behind_

@@ -458,6 +458,27 @@ class BLIX_PT_stacking(bpy.types.Panel):
         layout.operator("blix.stack_export", icon="EXPORT")
 
 
+class BLIX_PT_voxel(bpy.types.Panel):
+    bl_space_type = "IMAGE_EDITOR"
+    bl_region_type = "UI"
+    bl_category = "Blix"
+    bl_label = "Voxel Mesh"
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        scene = context.scene
+        assert layout is not None
+        assert scene is not None
+        col = layout.column()
+        col.prop(scene, "blix_voxel_object")
+        col.prop(scene, "blix_voxel_resolution")
+        col.operator("blix.mesh_slice", icon="MOD_ARRAY")
+        layout.operator("blix.stack_import", icon="IMPORT")
+        col = layout.column()
+        col.prop(scene, "blix_voxel_scale")
+        col.operator("blix.mesh_build", icon="MESH_CUBE")
+
+
 class BLIX_PT_dither(bpy.types.Panel):
     bl_space_type = "IMAGE_EDITOR"
     bl_region_type = "UI"
@@ -510,6 +531,7 @@ _classes = (
     BLIX_PT_references,
     BLIX_PT_cels,
     BLIX_PT_stacking,
+    BLIX_PT_voxel,
     BLIX_PT_dither,
     BLIX_PT_palette,
 )
