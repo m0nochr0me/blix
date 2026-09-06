@@ -72,12 +72,20 @@ def _exposed(filled: np.ndarray, axis: int, sign: int) -> np.ndarray:
     return filled & ~neighbour
 
 
-def _shell(filled: np.ndarray) -> np.ndarray:
-    shell = np.zeros_like(filled)
+def _surface(filled: np.ndarray) -> np.ndarray:
+    surface = np.zeros_like(filled)
     for axis in range(3):
         for sign in (1, -1):
-            shell |= _exposed(filled, axis, sign)
-    return shell
+            surface |= _exposed(filled, axis, sign)
+    return surface
+
+
+def _shell(filled: np.ndarray, depth: int) -> np.ndarray:
+    """Filled voxels within depth steps of the outside along the six directions."""
+    core = filled
+    for _ in range(depth):
+        core = core & ~_surface(core)
+    return filled & ~core
 
 
 def _material_color(material: bpy.types.Material | None) -> np.ndarray:
@@ -192,10 +200,11 @@ def _voxel_colors(
     xs: np.ndarray,
     ys: np.ndarray,
     zs: np.ndarray,
+    depth: int,
 ) -> np.ndarray:
     """Shell voxels take the nearest face colour; interior voxels inherit from the voxel above."""
     rgb = np.zeros((*filled.shape, 3), dtype=np.float32)
-    shell = _shell(filled)
+    shell = _shell(filled, depth)
     for k, j, i in zip(*np.nonzero(shell), strict=True):
         _location, _normal, index, _distance = tree.find_nearest(Vector((xs[i], ys[j], zs[k])))
         if index is not None:
@@ -215,6 +224,7 @@ def slice_mesh(
     obj: bpy.types.Object,
     depsgraph: bpy.types.Depsgraph,
     resolution: int,
+    depth: int,
     swatches: np.ndarray | None,
 ) -> np.ndarray:
     """Cubic-voxel slices (z, y, x, rgba) of the mesh, longest XY side fitted to resolution."""
@@ -234,7 +244,7 @@ def slice_mesh(
     xs, ys = centre[0] + offsets, centre[1] + offsets
     zs = low[2] + (np.arange(slices) + 0.5) * voxel
     filled = _occupancy(_triangles(mesh, world), xs, ys, zs)
-    rgb = _voxel_colors(tree, face_colors(obj, mesh), filled, xs, ys, zs)
+    rgb = _voxel_colors(tree, face_colors(obj, mesh), filled, xs, ys, zs, depth)
     if swatches is not None and filled.any():
         _snap(rgb, filled, swatches)
     out = np.zeros((slices, resolution, resolution, 4), dtype=np.float32)
@@ -354,9 +364,11 @@ class BLIX_OT_mesh_slice(bpy.types.Operator):
         obj = props.voxel_object(scene)
         assert obj is not None
         resolution = props.voxel_resolution(scene)
+        depth = props.voxel_depth(scene)
         swatches = _swatches(context)
         try:
-            slices = slice_mesh(obj, context.evaluated_depsgraph_get(), resolution, swatches)
+            depsgraph = context.evaluated_depsgraph_get()
+            slices = slice_mesh(obj, depsgraph, resolution, depth, swatches)
         except ValueError as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
@@ -467,6 +479,14 @@ def register() -> None:
         min=2,
         max=256,
     )
+    scene_cls.blix_voxel_depth = bpy.props.IntProperty(
+        name="Paint Depth",
+        description="Pixels inward from the surface that take the face colour",
+        default=1,
+        min=1,
+        soft_max=8,
+        max=64,
+    )
     scene_cls.blix_voxel_scale = bpy.props.FloatProperty(
         name="Voxel Size",
         description="Edge length of one canvas pixel in the built mesh",
@@ -481,6 +501,7 @@ def register() -> None:
 def unregister() -> None:
     scene_cls = cast(Any, bpy.types.Scene)
     del scene_cls.blix_voxel_scale
+    del scene_cls.blix_voxel_depth
     del scene_cls.blix_voxel_resolution
     del scene_cls.blix_voxel_object
     for cls in reversed(_classes):

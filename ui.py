@@ -472,6 +472,7 @@ class BLIX_PT_voxel(bpy.types.Panel):
         col = layout.column()
         col.prop(scene, "blix_voxel_object")
         col.prop(scene, "blix_voxel_resolution")
+        col.prop(scene, "blix_voxel_depth")
         col.operator("blix.mesh_slice", icon="MOD_ARRAY")
         layout.operator("blix.stack_import", icon="IMPORT")
         col = layout.column()

@@ -272,10 +272,14 @@ The Voxel Mesh panel bridges the layer stack and scene meshes. _Slice Mesh_ voxe
 _Mesh_ object at _Resolution_ pixels along its longest XY side with cubic voxels and writes one
 layer per slice, bottom slice lowest, into a new square canvas named after the object. Each
 face's colour comes from its material — the Principled _Base Color_ when it is not textured,
-else the viewport colour — snapped to the nearest swatch of the active palette; with no palette
-the material colours are kept. Modifiers are applied and the object transform is baked, so the
-canvas shows the mesh as it stands in the scene. Only closed surfaces fill; overlapping and
-touching parts are fine, open meshes leave gaps.
+else the viewport colour — snapped to the perceptually nearest swatch of the active palette
+(CIELAB distance, so a teal lands on a teal rather than a green of similar brightness); with no
+palette the material colours are kept. _Paint Depth_ sets how many pixels inward from the
+surface take the face colour — raise it to 2 or more so the band that shows between stacked
+slices keeps the side colour; deeper pixels inherit the colour of the pixel above them.
+Modifiers are applied and the object transform is baked, so the canvas shows the mesh as it
+stands in the scene. Only closed surfaces fill; overlapping and touching parts are fine, open
+meshes leave gaps.
 
 _Build Mesh_ turns the visible stack, heights included and blend modes ignored like the export,
 into a mesh object with one quad per exposed voxel face and nothing inside; coplanar faces of one

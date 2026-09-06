@@ -169,6 +169,10 @@ def voxel_resolution(scene: bpy.types.Scene) -> int:
     return int(cast(Any, scene).blix_voxel_resolution)
 
 
+def voxel_depth(scene: bpy.types.Scene) -> int:
+    return int(cast(Any, scene).blix_voxel_depth)
+
+
 def voxel_scale(scene: bpy.types.Scene) -> float:
     return float(cast(Any, scene).blix_voxel_scale)
 

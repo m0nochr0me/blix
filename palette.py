@@ -14,6 +14,15 @@ if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
 
 _CODE = re.compile(r"[0-9a-fA-F]{6}")
+_XYZ = np.array(
+    [
+        [0.4124564, 0.3575761, 0.1804375],
+        [0.2126729, 0.7151522, 0.0721750],
+        [0.0193339, 0.1191920, 0.9503041],
+    ],
+    dtype=np.float32,
+)
+_WHITE = np.array([0.95047, 1.0, 1.08883], dtype=np.float32)
 
 
 def parse_hex(text: str) -> tuple[list[np.ndarray], int]:
@@ -46,9 +55,18 @@ def swatches(palette: bpy.types.Palette) -> np.ndarray:
     return paint.srgb_encode(np.array(colors, dtype=np.float32).reshape(-1, 3))
 
 
+def _lab(srgb: np.ndarray) -> np.ndarray:
+    xyz = paint.srgb_decode(srgb) @ _XYZ.T / _WHITE
+    f = np.where(xyz > 0.008856, np.cbrt(xyz), 7.787 * xyz + 16 / 116)
+    return np.stack(
+        [116 * f[:, 1] - 16, 500 * (f[:, 0] - f[:, 1]), 200 * (f[:, 1] - f[:, 2])], axis=1
+    )
+
+
 def nearest(colors: np.ndarray, swatches: np.ndarray) -> np.ndarray:
-    """Index of the closest swatch per colour row, Euclidean distance in sRGB."""
-    distance = ((colors[:, None, :] - swatches[None, :, :]) ** 2).sum(axis=2)
+    """Index of the closest swatch per sRGB colour row, CIELAB distance so hue outweighs value."""
+    lab, targets = _lab(colors), _lab(swatches)
+    distance = ((lab[:, None, :] - targets[None, :, :]) ** 2).sum(axis=2)
     return distance.argmin(axis=1)
 
 
