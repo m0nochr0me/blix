@@ -185,6 +185,10 @@ def voxel_scale(scene: bpy.types.Scene) -> float:
     return float(cast(Any, scene).blix_voxel_scale)
 
 
+def hull_view(scene: bpy.types.Scene, name: str) -> bpy.types.Image | None:
+    return getattr(cast(Any, scene), f"blix_hull_{name}")
+
+
 def cels(scene: bpy.types.Scene) -> Any:
     return cast(Any, scene).blix_cels
 

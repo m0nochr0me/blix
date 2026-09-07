@@ -1,4 +1,4 @@
-"""Voxel bridge: slice a mesh object into stack layers, build a mesh from the stack."""
+"""Voxel bridge: slice a mesh or hull projections into stack layers, build a mesh from the stack."""
 
 import math
 from pathlib import Path
@@ -19,6 +19,23 @@ if TYPE_CHECKING:
 _MAX_SLICES = 512
 _DEFAULT_COLOR = np.array([0.8, 0.8, 0.8], dtype=np.float32)
 _CORNERS = ((0, 0), (1, 0), (1, 1), (0, 1))
+VIEWS = ("front", "right", "top", "back", "left")
+REQUIRED_VIEWS = ("front", "right", "top")
+_MIRRORS = (("back", "front"), ("left", "right"))
+_RAYS = (
+    ("left", 2, False),
+    ("right", 2, True),
+    ("back", 1, True),
+    ("front", 1, False),
+    ("top", 0, True),
+)
+_VIEW_PROPS = {
+    "front": ("Front", "Seen from the front, as Blender's Front view"),
+    "right": ("Right", "Seen from the right, the front on the left, as Blender's Right view"),
+    "top": ("Top", "Seen from above, the front at the bottom, as Blender's Top view"),
+    "back": ("Back", "Seen from behind; empty mirrors the front"),
+    "left": ("Left", "Seen from the left, the front on the right; empty mirrors the right"),
+}
 
 
 def stack_voxels(canvas: bpy.types.Image) -> np.ndarray:
@@ -253,6 +270,69 @@ def slice_mesh(
     return out
 
 
+def _oriented(name: str, view: np.ndarray) -> np.ndarray:
+    """View pixels broadcastable over the (z, y, x, rgba) volume; back and left read mirrored."""
+    if name in ("back", "left"):
+        view = view[:, ::-1]
+    if name == "top":
+        return view[None, :, :]
+    if name in ("front", "back"):
+        return view[:, None, :]
+    return view[:, :, None]
+
+
+def _ray_count(filled: np.ndarray, axis: int, descending: bool) -> np.ndarray:
+    """Filled voxels met so far along each ray of the view, the voxel itself included."""
+    if not descending:
+        return np.cumsum(filled, axis=axis, dtype=np.int16)
+    return np.flip(np.cumsum(np.flip(filled, axis), axis=axis, dtype=np.int16), axis)
+
+
+def _view_sizes(views: dict[str, np.ndarray]) -> str:
+    return ", ".join(f"{name} {view.shape[1]}×{view.shape[0]}" for name, view in views.items())
+
+
+def hull_slices(views: dict[str, np.ndarray], depth: int) -> np.ndarray:
+    """Visual hull (z, y, x, rgba) of cropped views; each paints the first depth voxels it sees."""
+    for name, source in _MIRRORS:
+        views.setdefault(name, views[source][:, ::-1])
+    height, width = views["front"].shape[:2]
+    depth_size = views["right"].shape[1]
+    expected = {
+        "front": (height, width),
+        "back": (height, width),
+        "right": (height, depth_size),
+        "left": (height, depth_size),
+        "top": (depth_size, width),
+    }
+    if any(views[name].shape[:2] != size for name, size in expected.items()):
+        raise ValueError(f"View sizes disagree: {_view_sizes(views)}")
+    if height > _MAX_SLICES:
+        raise ValueError(f"{height} slices exceed the {_MAX_SLICES} limit")
+    oriented = {name: _oriented(name, view) for name, view in views.items()}
+    filled = np.ones((height, depth_size, width), dtype=bool)
+    for view in oriented.values():
+        filled &= view[..., 3] > 0
+    rgba = np.zeros((*filled.shape, 4), dtype=np.float32)
+    rgba[filled] = np.broadcast_to(oriented["top"], rgba.shape)[filled]
+    for name, axis, descending in _RAYS:
+        seen = filled & (_ray_count(filled, axis, descending) <= depth)
+        rgba[seen] = np.broadcast_to(oriented[name], rgba.shape)[seen]
+    return rgba
+
+
+def crop_view(image: bpy.types.Image) -> tuple[np.ndarray, select.Rect] | None:
+    """Opaque bounding box of the image as (pixels, rect); None when nothing is drawn."""
+    canvas = props.canvas_of(image)
+    if canvas is not None:
+        layers.sync_canvas(canvas)
+    pixels = select.read_pixels(image)
+    rect = select.mask_bbox(pixels[..., 3] > 0)
+    if rect is None:
+        return None
+    return pixels[rect[1] : rect[3], rect[0] : rect[2]], rect
+
+
 def color_index(
     voxels: np.ndarray, filled: np.ndarray, swatches: np.ndarray | None
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -379,6 +459,52 @@ class BLIX_OT_mesh_slice(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BLIX_OT_stack_projections(bpy.types.Operator):
+    """Build sprite stack layers on a new canvas from front, right and top views"""
+
+    bl_idname = "blix.stack_projections"
+    bl_label = "Stack Projections"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        scene = context.scene
+        if scene is None:
+            return False
+        return all(props.hull_view(scene, name) is not None for name in REQUIRED_VIEWS)
+
+    def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
+        scene = context.scene
+        assert scene is not None
+        views: dict[str, np.ndarray] = {}
+        rects: dict[str, select.Rect] = {}
+        for name in VIEWS:
+            image = props.hull_view(scene, name)
+            if image is None:
+                continue
+            cropped = crop_view(image)
+            if cropped is None:
+                self.report({"ERROR"}, f"{image.name} has no opaque pixels")
+                return {"CANCELLED"}
+            views[name], rects[name] = cropped
+        try:
+            hull = hull_slices(views, props.voxel_depth(scene))
+        except ValueError as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        top = props.hull_view(scene, "top")
+        assert top is not None
+        width, height = top.size
+        x0, y0, x1, y1 = rects["top"]
+        slices = np.zeros((hull.shape[0], height, width, 4), dtype=np.float32)
+        slices[:, y0:y1, x0:x1] = hull
+        owner = props.canvas_of(top) or top
+        canvas = bpy.data.images.new(f"{owner.name}_stack", width, height, alpha=True)
+        _layers_from_slices(context, canvas, slices, "Blix Stack Projections")
+        self.report({"INFO"}, f"{len(slices)} slices at {width}×{height} px")
+        return {"FINISHED"}
+
+
 class BLIX_OT_mesh_build(bpy.types.Operator):
     """Build a shell mesh from the visible layer stack, UV-mapped to a palette texture"""
 
@@ -459,7 +585,7 @@ def _is_mesh(_self: Any, obj: bpy.types.Object) -> bool:
     return obj.type == "MESH"
 
 
-_classes = (BLIX_OT_mesh_slice, BLIX_OT_mesh_build, BLIX_OT_stack_import)
+_classes = (BLIX_OT_mesh_slice, BLIX_OT_stack_projections, BLIX_OT_mesh_build, BLIX_OT_stack_import)
 
 
 def register() -> None:
@@ -496,10 +622,18 @@ def register() -> None:
         precision=3,
         unit="LENGTH",
     )
+    for name, (label, description) in _VIEW_PROPS.items():
+        setattr(
+            scene_cls,
+            f"blix_hull_{name}",
+            bpy.props.PointerProperty(type=bpy.types.Image, name=label, description=description),
+        )
 
 
 def unregister() -> None:
     scene_cls = cast(Any, bpy.types.Scene)
+    for name in _VIEW_PROPS:
+        delattr(scene_cls, f"blix_hull_{name}")
     del scene_cls.blix_voxel_scale
     del scene_cls.blix_voxel_depth
     del scene_cls.blix_voxel_resolution

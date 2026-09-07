@@ -292,6 +292,17 @@ Modifiers are applied and the object transform is baked, so the canvas shows the
 stands in the scene. Only closed surfaces fill; overlapping and touching parts are fine, open
 meshes leave gaps.
 
+_Stack Projections_ builds the stack from drawn views instead of a mesh: pick the _Front_,
+_Right_ and _Top_ images — any images, layer images of the current canvas included — oriented
+like Blender's views (front on the left of the right view, front at the bottom of the top view).
+Each view is cropped to its opaque pixels, so their widths and heights must agree: the front and
+top share a width, the front and right a height, the right and top a depth. The shape is the
+visual hull, the volume every view's silhouette allows, so a notch has to be drawn in every view
+that sees it. Each view paints the pixels it sees, _Paint Depth_ deep, top winning over front and
+back over left and right; pixels no view reaches take the top view's colour. _Back_ and _Left_ are
+optional and mirror the front and right views when empty. The new canvas is the size of the top
+view image with the slices placed where its drawing sits.
+
 _Build Mesh_ turns the visible stack, heights included and blend modes ignored like the export,
 into a mesh object with one quad per exposed voxel face and nothing inside; coplanar faces of one
 colour merge into single n-gons. Every face is UV-mapped to a texel of a palette texture — the

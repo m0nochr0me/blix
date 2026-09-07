@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import bpy
 
-from . import cels, layers, palette, props, references, text
+from . import cels, layers, palette, props, references, text, voxel
 
 
 def _space(context: bpy.types.Context) -> bpy.types.SpaceImageEditor:
@@ -476,6 +476,10 @@ class BLIX_PT_voxel(bpy.types.Panel):
         col.prop(scene, "blix_voxel_resolution")
         col.prop(scene, "blix_voxel_depth")
         col.operator("blix.mesh_slice", icon="MOD_ARRAY")
+        col = layout.column()
+        for name in voxel.VIEWS:
+            col.prop(scene, f"blix_hull_{name}")
+        col.operator("blix.stack_projections", icon="AXIS_TOP")
         layout.operator("blix.stack_import", icon="IMPORT")
         col = layout.column()
         col.prop(scene, "blix_voxel_scale")
