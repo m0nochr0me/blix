@@ -453,6 +453,7 @@ class BLIX_PT_stacking(bpy.types.Panel):
         sub.active = props.stack_noise(scene) > 0
         sub.prop(scene, "blix_stack_grain")
         col.prop(scene, "blix_stack_cavity")
+        col.prop(scene, "blix_stack_light")
         layer = layers.active_layer(canvas)
         if layer is not None:
             layout.prop(layer, "height")

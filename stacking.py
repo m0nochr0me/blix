@@ -132,6 +132,13 @@ def cavity_delta(count: np.ndarray) -> np.ndarray:
     return np.clip(np.where(count < 17, ridge, np.where(count < 26, valley, np.float32(0))), -1, 1)
 
 
+def light_delta(filled: np.ndarray) -> np.ndarray:
+    """Offset per unit strength for (z, y, x) occupancy: covered from above -1, exposed top +1."""
+    covered = np.zeros(filled.shape, dtype=bool)
+    covered[:-1] = filled[1:]
+    return np.where(covered, np.float32(-1), np.float32(1))
+
+
 def shade(pixels: np.ndarray, delta: np.ndarray) -> np.ndarray:
     out = pixels.copy()
     delta = delta * (pixels[..., 3] > 0)
@@ -157,6 +164,7 @@ def _get_stack_shader() -> gpu.types.GPUShader:
     info.push_constant("INT", "grain")
     info.push_constant("INT", "slice_index")
     info.push_constant("FLOAT", "cavity")
+    info.push_constant("FLOAT", "light")
     info.push_constant("INT", "has_above")
     info.fragment_out(0, "VEC4", "fragColor")
     info.vertex_source(
@@ -194,6 +202,9 @@ def _get_stack_shader() -> gpu.types.GPUShader:
         "uint h = hash(hash(hash(uint(slice_index)) + cell.y) + cell.x);"
         "delta += (float(h >> 8u) / 16777215.0 * 2.0 - 1.0) * strength;}"
         "if (cavity > 0.0) delta += cavity_delta(texel, size) * cavity;"
+        "if (light > 0.0)"
+        "{bool covered = has_above != 0 && texelFetch(above, texel, 0).a > 0.0;"
+        "delta += covered ? -light : light;}"
         "vec3 rgb = clamp(linear_to_srgb(color.rgb) + delta, 0.0, 1.0);"
         "fragColor = vec4(srgb_to_linear(rgb), color.a);}"
     )
@@ -204,8 +215,9 @@ def _get_stack_shader() -> gpu.types.GPUShader:
 def _draw_slice(corners: select.Quad, slices: list[Slice], z: int, scene: bpy.types.Scene) -> None:
     strength = props.stack_noise(scene)
     cavity = props.stack_cavity(scene)
+    light = props.stack_light(scene)
     texture = slices[z][0]
-    if strength <= 0 and cavity <= 0:
+    if strength <= 0 and cavity <= 0 and light <= 0:
         select.draw_texture_quad(corners, texture, False)
         return
     shader = _get_stack_shader()
@@ -213,6 +225,7 @@ def _draw_slice(corners: select.Quad, slices: list[Slice], z: int, scene: bpy.ty
     shader.uniform_int("grain", props.stack_grain(scene))
     shader.uniform_int("slice_index", z)
     shader.uniform_float("cavity", cavity)
+    shader.uniform_float("light", light)
     shader.uniform_int("has_above", int(z + 1 < len(slices)))
     shader.uniform_sampler("below", slices[max(z - 1, 0)][0])
     shader.uniform_sampler("above", slices[min(z + 1, len(slices) - 1)][0])
@@ -290,15 +303,18 @@ def build_strip(
     strength: float = 0.0,
     grain: int = 1,
     cavity: float = 0.0,
+    light: float = 0.0,
 ) -> np.ndarray | None:
-    """Horizontal strip of visible slices, bottom first, noised and cavity shaded, scaled up."""
+    """Horizontal strip of visible slices, bottom first, noised, cavity and light shaded, scaled."""
     included = stack_layers(canvas)
     if not included:
         return None
     slices = [select.read_pixels(layer.image) for layer in included for _ in range(layer.height)]
-    counts = None
-    if cavity > 0:
-        counts = cavity_counts(np.stack([pixels[..., 3] > 0 for pixels in slices]))
+    counts = lit = None
+    if cavity > 0 or light > 0:
+        filled = np.stack([pixels[..., 3] > 0 for pixels in slices])
+        counts = cavity_counts(filled) if cavity > 0 else None
+        lit = light_delta(filled) if light > 0 else None
     width, height = canvas.size[0] * scale, canvas.size[1] * scale
     strip = np.zeros((height, width * len(slices), 4), dtype=np.float32)
     for z, pixels in enumerate(slices):
@@ -307,6 +323,8 @@ def build_strip(
             delta += noise(tuple(canvas.size), z, grain) * strength
         if counts is not None:
             delta += cavity_delta(counts[z]) * cavity
+        if lit is not None:
+            delta += lit[z] * light
         shaded = shade(pixels, delta)
         strip[:, z * width : (z + 1) * width] = shaded.repeat(scale, axis=0).repeat(scale, axis=1)
     return strip
@@ -348,6 +366,11 @@ class BLIX_OT_stack_export(bpy.types.Operator, ExportHelper):
         description="Bake the cavity shading into exported slices",
         default=True,
     )
+    apply_light: bpy.props.BoolProperty(
+        name="Apply Light",
+        description="Bake the top light into exported slices",
+        default=True,
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -370,7 +393,8 @@ class BLIX_OT_stack_export(bpy.types.Operator, ExportHelper):
         scale = props.stack_scale(scene) if self.apply_scale else 1
         strength = props.stack_noise(scene) if self.apply_noise else 0.0
         cavity = props.stack_cavity(scene) if self.apply_cavity else 0.0
-        strip = build_strip(canvas, scale, strength, props.stack_grain(scene), cavity)
+        light = props.stack_light(scene) if self.apply_light else 0.0
+        strip = build_strip(canvas, scale, strength, props.stack_grain(scene), cavity, light)
         if strip is None:
             self.report({"ERROR"}, "No visible layers")
             return {"CANCELLED"}
@@ -469,6 +493,17 @@ def register() -> None:
         subtype="FACTOR",
         update=_redraw,
     )
+    scene_cls.blix_stack_light = bpy.props.FloatProperty(
+        name="Light",
+        description="Lighten exposed tops and darken covered sides, in color units; 0 disables",
+        default=0.0,
+        min=0.0,
+        max=0.5,
+        step=1,
+        precision=3,
+        subtype="FACTOR",
+        update=_redraw,
+    )
     overlay.extra_draws.append(_draw_stack)
 
 
@@ -478,6 +513,7 @@ def unregister() -> None:
     _target = None
     _stack_shader = None
     scene_cls = cast(Any, bpy.types.Scene)
+    del scene_cls.blix_stack_light
     del scene_cls.blix_stack_cavity
     del scene_cls.blix_stack_grain
     del scene_cls.blix_stack_noise

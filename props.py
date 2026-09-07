@@ -165,6 +165,10 @@ def stack_cavity(scene: bpy.types.Scene) -> float:
     return cast(Any, scene).blix_stack_cavity
 
 
+def stack_light(scene: bpy.types.Scene) -> float:
+    return cast(Any, scene).blix_stack_light
+
+
 def voxel_object(scene: bpy.types.Scene) -> bpy.types.Object | None:
     return cast(Any, scene).blix_voxel_object
 

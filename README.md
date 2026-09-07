@@ -267,10 +267,15 @@ neighbours in the slices below, around and above it: convex edges and corners ge
 and pits darker, flat faces stay put. The shading is view independent, so the strip export carries
 it at any angle. Zero turns it off.
 
+_Light_ lights the stack from above: pixels with nothing over them in the next slice up are tops
+and get lighter, covered pixels form the sides and get darker by the same amount, so walls and
+floors of one colour separate. It is view independent too and stacks with cavity. Zero turns it
+off.
+
 _Export Sprite Stack_ writes a horizontal PNG strip of the slices, bottom slice first, each layer
 repeated by its height; _Apply Scale_ (on by default) upscales the slices by the stack scale
 with nearest sampling, _Apply Noise_ (on by default) bakes the same noise pattern the preview
-shows into the slices and _Apply Cavity_ (on by default) bakes the cavity shading.
+shows into the slices, _Apply Cavity_ and _Apply Light_ (on by default) bake the two shadings.
 
 ### Voxel Mesh
 
