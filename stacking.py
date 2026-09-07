@@ -28,7 +28,7 @@ _PROJECTIONS: dict[str, tuple[float, float]] = {
 Slice = tuple[gpu.types.GPUTexture, select.Quad]
 Target = tuple[gpu.types.GPUTexture, gpu.types.GPUFrameBuffer]
 _target: Target | None = None
-_noise_shader: gpu.types.GPUShader | None = None
+_stack_shader: gpu.types.GPUShader | None = None
 
 
 def _redraw(_self: Any, context: bpy.types.Context) -> None:
@@ -116,29 +116,48 @@ def noise(size: tuple[int, int], z: int, grain: int) -> np.ndarray:
     return (h >> 8).astype(np.float32) / np.float32(16777215.0) * 2 - 1
 
 
-def apply_noise(pixels: np.ndarray, z: int, strength: float, grain: int) -> np.ndarray:
-    height, width = pixels.shape[:2]
-    delta = noise((width, height), z, grain) * strength * (pixels[..., 3] > 0)
+def cavity_counts(filled: np.ndarray) -> np.ndarray:
+    """Filled 26-neighbours per voxel of (z, y, x) occupancy; below the bottom slice repeats it."""
+    padded = np.pad(filled.astype(np.int16), 1)
+    padded[0] = padded[1]
+    windows = np.lib.stride_tricks.sliding_window_view(padded, (3, 3, 3))
+    return windows.sum(axis=(-3, -2, -1)) - filled
+
+
+def cavity_delta(count: np.ndarray) -> np.ndarray:
+    """Ridge-positive offset per unit strength; flat 17 and interior 26 give 0, as in the shader."""
+    count = count.astype(np.float32)
+    ridge = (np.float32(17) - count) / np.float32(10)
+    valley = (np.float32(17) - count) / np.float32(6)
+    return np.clip(np.where(count < 17, ridge, np.where(count < 26, valley, np.float32(0))), -1, 1)
+
+
+def shade(pixels: np.ndarray, delta: np.ndarray) -> np.ndarray:
     out = pixels.copy()
+    delta = delta * (pixels[..., 3] > 0)
     out[..., :3] = np.clip(pixels[..., :3] + delta[..., None], 0, 1)
     return out
 
 
-def _get_noise_shader() -> gpu.types.GPUShader:
-    global _noise_shader
-    if _noise_shader is not None:
-        return _noise_shader
-    iface = gpu.types.GPUStageInterfaceInfo("blix_stack_noise_iface")
+def _get_stack_shader() -> gpu.types.GPUShader:
+    global _stack_shader
+    if _stack_shader is not None:
+        return _stack_shader
+    iface = gpu.types.GPUStageInterfaceInfo("blix_stack_iface")
     iface.smooth("VEC2", "uv_interp")
     info = gpu.types.GPUShaderCreateInfo()
     info.vertex_in(0, "VEC2", "pos")
     info.vertex_in(1, "VEC2", "uv")
     info.vertex_out(iface)
     info.sampler(0, "FLOAT_2D", "image")
+    info.sampler(1, "FLOAT_2D", "below")
+    info.sampler(2, "FLOAT_2D", "above")
     info.push_constant("MAT4", "ModelViewProjectionMatrix")
     info.push_constant("FLOAT", "strength")
     info.push_constant("INT", "grain")
     info.push_constant("INT", "slice_index")
+    info.push_constant("FLOAT", "cavity")
+    info.push_constant("INT", "has_above")
     info.fragment_out(0, "VEC4", "fragColor")
     info.vertex_source(
         "void main()"
@@ -151,32 +170,52 @@ def _get_noise_shader() -> gpu.types.GPUShader:
         "{return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));}"
         "uint hash(uint x)"
         "{x ^= x >> 16u; x *= 0x7feb352du; x ^= x >> 15u; x *= 0x846ca68bu; return x ^ (x >> 16u);}"
+        "int filled(sampler2D tex, ivec2 texel, ivec2 size)"
+        "{int n = 0;"
+        "for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++)"
+        "{ivec2 p = texel + ivec2(dx, dy);"
+        "if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, size))) continue;"
+        "n += int(texelFetch(tex, p, 0).a > 0.0);}"
+        "return n;}"
+        "float cavity_delta(ivec2 texel, ivec2 size)"
+        "{int count = filled(image, texel, size) + filled(below, texel, size) - 1;"
+        "if (has_above != 0) count += filled(above, texel, size);"
+        "if (count < 17) return min((17.0 - float(count)) / 10.0, 1.0);"
+        "if (count < 26) return (17.0 - float(count)) / 6.0;"
+        "return 0.0;}"
         "void main()"
         "{ivec2 size = textureSize(image, 0);"
         "ivec2 texel = ivec2(clamp(uv_interp, 0.0, 0.99999) * vec2(size));"
         "vec4 color = texelFetch(image, texel, 0);"
         "if (color.a <= 0.0) discard;"
-        "uvec2 cell = uvec2(texel / grain);"
+        "float delta = 0.0;"
+        "if (strength > 0.0)"
+        "{uvec2 cell = uvec2(texel / grain);"
         "uint h = hash(hash(hash(uint(slice_index)) + cell.y) + cell.x);"
-        "float delta = (float(h >> 8u) / 16777215.0 * 2.0 - 1.0) * strength;"
+        "delta += (float(h >> 8u) / 16777215.0 * 2.0 - 1.0) * strength;}"
+        "if (cavity > 0.0) delta += cavity_delta(texel, size) * cavity;"
         "vec3 rgb = clamp(linear_to_srgb(color.rgb) + delta, 0.0, 1.0);"
         "fragColor = vec4(srgb_to_linear(rgb), color.a);}"
     )
-    _noise_shader = gpu.shader.create_from_info(info)
-    return _noise_shader
+    _stack_shader = gpu.shader.create_from_info(info)
+    return _stack_shader
 
 
-def _draw_slice(
-    corners: select.Quad, texture: gpu.types.GPUTexture, z: int, scene: bpy.types.Scene
-) -> None:
+def _draw_slice(corners: select.Quad, slices: list[Slice], z: int, scene: bpy.types.Scene) -> None:
     strength = props.stack_noise(scene)
-    if strength <= 0:
+    cavity = props.stack_cavity(scene)
+    texture = slices[z][0]
+    if strength <= 0 and cavity <= 0:
         select.draw_texture_quad(corners, texture, False)
         return
-    shader = _get_noise_shader()
+    shader = _get_stack_shader()
     shader.uniform_float("strength", strength)
     shader.uniform_int("grain", props.stack_grain(scene))
     shader.uniform_int("slice_index", z)
+    shader.uniform_float("cavity", cavity)
+    shader.uniform_int("has_above", int(z + 1 < len(slices)))
+    shader.uniform_sampler("below", slices[max(z - 1, 0)][0])
+    shader.uniform_sampler("above", slices[min(z + 1, len(slices) - 1)][0])
     select.draw_quad(shader, corners, texture)
 
 
@@ -215,8 +254,8 @@ def _draw_pixelated(
         with matrix_stack.push_pop(), matrix_stack.push_pop_projection():
             gpu.matrix.load_identity()
             gpu.matrix.load_projection_matrix(projection)
-            for z, (slice_texture, corners) in enumerate(slices):
-                _draw_slice(corners, slice_texture, z, scene)
+            for z, (_, corners) in enumerate(slices):
+                _draw_slice(corners, slices, z, scene)
     gpu.state.depth_test_set(cast(Any, depth_test))
     quad = _to_region(affine, [(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
     gpu.state.blend_set("ALPHA_PREMULT")
@@ -241,29 +280,35 @@ def _draw_stack(region: bpy.types.Region, image: bpy.types.Image) -> None:
     if props.stack_pixelate(scene):
         _draw_pixelated(slices, affine, props.stack_resolution(scene), scene)
         return
-    for z, (texture, corners) in enumerate(slices):
-        _draw_slice(_to_region(affine, corners), texture, z, scene)
+    for z, (_, corners) in enumerate(slices):
+        _draw_slice(_to_region(affine, corners), slices, z, scene)
 
 
 def build_strip(
-    canvas: bpy.types.Image, scale: int = 1, strength: float = 0.0, grain: int = 1
+    canvas: bpy.types.Image,
+    scale: int = 1,
+    strength: float = 0.0,
+    grain: int = 1,
+    cavity: float = 0.0,
 ) -> np.ndarray | None:
-    """Horizontal strip of visible slices, bottom first, noised by strength, upscaled by scale."""
+    """Horizontal strip of visible slices, bottom first, noised and cavity shaded, scaled up."""
     included = stack_layers(canvas)
     if not included:
         return None
+    slices = [select.read_pixels(layer.image) for layer in included for _ in range(layer.height)]
+    counts = None
+    if cavity > 0:
+        counts = cavity_counts(np.stack([pixels[..., 3] > 0 for pixels in slices]))
     width, height = canvas.size[0] * scale, canvas.size[1] * scale
-    total = sum(layer.height for layer in included)
-    strip = np.zeros((height, width * total, 4), dtype=np.float32)
-    cell = 0
-    for layer in included:
-        pixels = select.read_pixels(layer.image)
-        for _ in range(layer.height):
-            noised = apply_noise(pixels, cell, strength, grain) if strength > 0 else pixels
-            strip[:, cell * width : (cell + 1) * width] = noised.repeat(scale, axis=0).repeat(
-                scale, axis=1
-            )
-            cell += 1
+    strip = np.zeros((height, width * len(slices), 4), dtype=np.float32)
+    for z, pixels in enumerate(slices):
+        delta = np.zeros(pixels.shape[:2], dtype=np.float32)
+        if strength > 0:
+            delta += noise(tuple(canvas.size), z, grain) * strength
+        if counts is not None:
+            delta += cavity_delta(counts[z]) * cavity
+        shaded = shade(pixels, delta)
+        strip[:, z * width : (z + 1) * width] = shaded.repeat(scale, axis=0).repeat(scale, axis=1)
     return strip
 
 
@@ -298,6 +343,11 @@ class BLIX_OT_stack_export(bpy.types.Operator, ExportHelper):
         description="Add the stack noise to exported slices",
         default=True,
     )
+    apply_cavity: bpy.props.BoolProperty(
+        name="Apply Cavity",
+        description="Bake the cavity shading into exported slices",
+        default=True,
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -319,7 +369,8 @@ class BLIX_OT_stack_export(bpy.types.Operator, ExportHelper):
         assert scene is not None
         scale = props.stack_scale(scene) if self.apply_scale else 1
         strength = props.stack_noise(scene) if self.apply_noise else 0.0
-        strip = build_strip(canvas, scale, strength, props.stack_grain(scene))
+        cavity = props.stack_cavity(scene) if self.apply_cavity else 0.0
+        strip = build_strip(canvas, scale, strength, props.stack_grain(scene), cavity)
         if strip is None:
             self.report({"ERROR"}, "No visible layers")
             return {"CANCELLED"}
@@ -407,15 +458,27 @@ def register() -> None:
         max=16,
         update=_redraw,
     )
+    scene_cls.blix_stack_cavity = bpy.props.FloatProperty(
+        name="Cavity",
+        description="Brighten ridges and darken valleys of the stack, in color units; 0 disables",
+        default=0.0,
+        min=0.0,
+        max=0.5,
+        step=1,
+        precision=3,
+        subtype="FACTOR",
+        update=_redraw,
+    )
     overlay.extra_draws.append(_draw_stack)
 
 
 def unregister() -> None:
-    global _target, _noise_shader
+    global _target, _stack_shader
     overlay.extra_draws.remove(_draw_stack)
     _target = None
-    _noise_shader = None
+    _stack_shader = None
     scene_cls = cast(Any, bpy.types.Scene)
+    del scene_cls.blix_stack_cavity
     del scene_cls.blix_stack_grain
     del scene_cls.blix_stack_noise
     del scene_cls.blix_stack_scale_layers
