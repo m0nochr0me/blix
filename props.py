@@ -105,6 +105,10 @@ def dither_pattern(scene: bpy.types.Scene) -> str:
     return cast(Any, scene).blix_dither_pattern
 
 
+def dither_seed(scene: bpy.types.Scene) -> int:
+    return cast(Any, scene).blix_dither_seed
+
+
 def dither_custom(scene: bpy.types.Scene) -> bpy.types.Image | None:
     return cast(Any, scene).blix_dither_custom
 

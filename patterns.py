@@ -124,9 +124,9 @@ def _assign_ranks(
 
 
 @cache
-def blue_noise(n: int = BLUE_NOISE_SIZE) -> np.ndarray:
-    """Void-and-cluster ranks over a wrapping n x n tile; deterministic for a fixed seed."""
-    rng = np.random.default_rng(BLUE_NOISE_SEED)
+def blue_noise(n: int = BLUE_NOISE_SIZE, seed: int = BLUE_NOISE_SEED) -> np.ndarray:
+    """Void-and-cluster ranks over a wrapping n x n tile; deterministic per seed."""
+    rng = np.random.default_rng(seed)
     kernel = _wrapped_gaussian(n, BLUE_NOISE_SIGMA)
     total = n * n
     pattern = np.zeros(total, dtype=bool)

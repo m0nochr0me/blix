@@ -330,7 +330,7 @@ Ctrl stroke of the brush erases with the pattern; with it off the secondary colo
 transparency's place. Both tools honor an active selection as their bounds.
 
 The Dither panel picks the _Pattern_: Bayer 2x2/4x4/8x8, Blue Noise (a 64x64 void-and-cluster
-tile), horizontal, vertical and diagonal lines, halftone dots on a square or offset grid, or
+tile; _Seed_ picks a different tile), horizontal, vertical and diagonal lines, halftone dots on a square or offset grid, or
 _Custom_ — any image up to 256x256 used as a tile, darker pixels painting first, so a black and
 white tile reproduces exactly at a density equal to its black fraction. Patterns are anchored to
 image coordinates, so strokes and fills line up. _Gradient_ switches the gradient tool from the

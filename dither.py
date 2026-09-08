@@ -32,6 +32,8 @@ def custom_thresholds(image: bpy.types.Image) -> np.ndarray | None:
 
 def pattern_thresholds(scene: bpy.types.Scene) -> np.ndarray | None:
     pattern = props.dither_pattern(scene)
+    if pattern == "BLUE":
+        return patterns.blue_noise(seed=props.dither_seed(scene))
     if pattern != "CUSTOM":
         return patterns.TILES[pattern]()
     image = props.dither_custom(scene)
@@ -383,6 +385,9 @@ def register() -> None:
         ),
         default="BAYER4",
     )
+    scene_cls.blix_dither_seed = bpy.props.IntProperty(
+        name="Seed", description="Blue noise tile seed", default=0, min=0
+    )
     scene_cls.blix_dither_custom = bpy.props.PointerProperty(
         type=bpy.types.Image, name="Tile", description="Image used as the custom dither tile"
     )
@@ -421,6 +426,7 @@ def unregister() -> None:
     del scene_cls.blix_dither_density
     del scene_cls.blix_dither_gradient
     del scene_cls.blix_dither_custom
+    del scene_cls.blix_dither_seed
     del scene_cls.blix_dither_pattern
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)
