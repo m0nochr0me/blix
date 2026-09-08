@@ -6,13 +6,12 @@ from typing import TYPE_CHECKING, Any, cast
 import bpy
 import numpy as np
 
-from . import mirror, overlay, paint, patterns, props, select, undo
+from . import layers, mirror, overlay, paint, palette, patterns, props, select, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
 
 SNAP_ANGLE = math.pi / 4
-TRANSPARENT = np.zeros(4, dtype=np.float32)
 CUSTOM_MAX = 256
 LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 GRADIENT_TAPS: dict[str, patterns.Taps | None] = {
@@ -123,7 +122,7 @@ def _gradient_colors(context: bpy.types.Context) -> tuple[np.ndarray, np.ndarray
     scene = context.scene
     assert scene is not None
     if props.dither_transparent(scene):
-        return color_a, TRANSPARENT
+        return color_a, paint.TRANSPARENT
     return color_a, color_b
 
 
@@ -223,7 +222,7 @@ class BLIX_OT_dither_gradient(bpy.types.Operator):
         undo.record(context, image)
         select.write_pixels(image, pixels)
         preview.clear()
-        undo.record(context, image, written)
+        layers.record_write(context, image, written)
         overlay.tag_redraw(context)
 
 
@@ -258,7 +257,7 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
         self._written = np.zeros(self._snapshot.shape[:2], dtype=bool)
         primary, secondary = paint.brush_colors(context)
         if event.ctrl:
-            self._color = TRANSPARENT if props.dither_transparent(scene) else secondary
+            self._color = paint.TRANSPARENT if props.dither_transparent(scene) else secondary
         else:
             self._color = primary
         self._last = select.mouse_pixel(region, image, event)
@@ -316,7 +315,8 @@ class BLIX_OT_dither_stroke(bpy.types.Operator):
             return {"RUNNING_MODAL"}
 
         if event.type == "LEFTMOUSE" and event.value == "RELEASE":
-            undo.record(context, image, self._written)
+            layers.record_write(context, image, self._written)
+            overlay.tag_redraw(context)
             return {"FINISHED"}
 
         if event.type in {"ESC", "RIGHTMOUSE"}:
@@ -335,7 +335,10 @@ class BLIX_TOOL_dither_gradient(bpy.types.WorkSpaceTool):
     bl_description = "Dithered gradient between brush colors"
     bl_icon = "ops.paint.weight_gradient"
     bl_widget = None
-    bl_keymap = (("blix.dither_gradient", {"type": "LEFTMOUSE", "value": "PRESS"}, None),)
+    bl_keymap = (
+        ("blix.dither_gradient", {"type": "LEFTMOUSE", "value": "PRESS"}, None),
+        palette.POPUP_KEYMAP_ITEM,
+    )
 
 
 class BLIX_TOOL_dither_brush(bpy.types.WorkSpaceTool):
@@ -349,6 +352,7 @@ class BLIX_TOOL_dither_brush(bpy.types.WorkSpaceTool):
     bl_keymap = (
         ("blix.dither_stroke", {"type": "LEFTMOUSE", "value": "PRESS"}, None),
         ("blix.dither_stroke", {"type": "LEFTMOUSE", "value": "PRESS", "ctrl": True}, None),
+        palette.POPUP_KEYMAP_ITEM,
     )
 
 

@@ -7,6 +7,8 @@ import numpy as np
 
 from . import select
 
+TRANSPARENT = np.zeros(4, dtype=np.float32)
+
 
 def srgb_encode(color: np.ndarray) -> np.ndarray:
     return np.where(

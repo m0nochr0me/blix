@@ -88,11 +88,13 @@ edges stay crisp and no new colors appear.
 | Copy                    | Ctrl+`C`                   |
 | Paste                   | Ctrl+`V`                   |
 | Delete pixels           | `X` or Del                 |
+| Invert selection        | Ctrl+`I`                   |
 | Clear selection         | Esc                        |
 
 The _Mode_ row in the Selection panel sets the default for a plain LMB gesture; Shift and Ctrl
 override it for that gesture. Ctrl+LMB within 6 px of a guide still grabs the guide instead of
-subtracting. Quarter turns and flips are panel buttons, and Copy and Delete exist as buttons too.
+subtracting. Quarter turns and flips are panel buttons, and Copy, Delete and Invert exist as
+buttons too; inverting with no selection selects the whole image.
 Copy puts the pixels on the system clipboard as well, and _Copy Flattened_ puts the whole
 composite there. Paste takes the clipboard image — copied in Blix or in any other app — lands it
 on a new layer above the active one and starts a move: click or Enter confirms, Esc leaves it
@@ -105,15 +107,19 @@ the active layer.
 One toolbar group holds four tools — _Blix Rectangle_, _Ellipse_, _Hexagon_ and _Line_ — hold the
 button to switch. Drag to draw; the GPU preview shows the exact pixels before the commit. _Filled_
 lives in the Shapes panel; _Pointy Top_ appears there while the hexagon tool is active. Outlines
-are 1 px. An active selection clips the result, and enabled mirror axes reflect it.
+are 1 px. An active selection clips the result, and enabled mirror axes reflect it. Ctrl erases
+the shape from the active layer instead of painting it; the preview shows the pixels it will
+clear as a grey haze. On a layered canvas the result is composited right away, so a shape drawn
+on a lower layer shows under the layers above it.
 
 | Action           | Input                                                |
 | ---------------- | ---------------------------------------------------- |
 | Draw             | LMB drag, corner to corner                           |
 | Constrain        | Shift — square/circle/regular hexagon, 45° for lines |
 | Draw from center | Alt                                                  |
-| Secondary color  | Ctrl                                                 |
+| Erase            | Ctrl                                                 |
 | Cancel           | Esc or RMB                                           |
+| Palette popup    | RMB, with _RMB Opens Palette_ on                     |
 
 ### Mirror
 
@@ -249,8 +255,9 @@ The Sprite Stacking panel appears once the image has layers. _Preview_ draws the
 beside the canvas as a stack of slices, bottom layer lowest, in the chosen _Projection_ —
 Isometric (35.26° elevation), Dimetric (30°, the 2:1 pixel-art view) or Trimetric (20° with a
 30° yaw offset) — rotated by _Angle_. _Height_ on the active layer repeats its slice that many
-units. Layers hidden by the eye toggle or by their cel track are left out, as are layers whose
-size differs from the canvas.
+units; hold Alt while editing the field to set every layer of the canvas to that height. Layers
+hidden by the eye toggle or by their cel track are left out, as are layers whose size differs
+from the canvas.
 
 _Pixelate_ rasterizes the preview at _Resolution_ texels per canvas pixel (1 matches the canvas)
 and blits it with nearest sampling, so the stack previews as pixel art. _Scale_ shows the stack
@@ -341,7 +348,7 @@ back the exact source code on an 8-bit image.
 _RMB Opens Palette_ (off by default, in the add-on preferences) makes the right mouse button in
 paint mode pop up the palette under the cursor — palette selector and swatches — instead of
 Blender's color wheel. The stock RMB clone-grab and stencil-control bindings are shadowed while it
-is on.
+is on. The shape and dither tools open the same popup on RMB.
 
 ## Preferences
 

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
 
 _CODE = re.compile(r"[0-9a-fA-F]{6}")
+POPUP_KEYMAP_ITEM = ("blix.palette_popup", {"type": "RIGHTMOUSE", "value": "PRESS"}, None)
 _XYZ = np.array(
     [
         [0.4124564, 0.3575761, 0.1804375],

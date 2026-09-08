@@ -6,12 +6,13 @@ from typing import TYPE_CHECKING, Any, cast
 import bpy
 import numpy as np
 
-from . import guides, mirror, overlay, paint, props, select, undo
+from . import guides, layers, mirror, overlay, paint, palette, props, select, undo
 
 if TYPE_CHECKING:
     from bpy.stub_internal.rna_enums import OperatorReturnItems
 
 SNAP_ANGLE = math.pi / 4
+ERASE_PREVIEW = np.array([0.5, 0.5, 0.5, 0.5], dtype=np.float32)
 
 KIND_ITEMS = (
     ("LINE", "Line", "Straight line between the drag endpoints"),
@@ -79,7 +80,7 @@ def shape_coverage(
 
 
 class BLIX_OT_draw_shape(bpy.types.Operator):
-    """Draw a shape; Shift constrains, Alt draws from center, Ctrl uses the secondary color"""
+    """Draw a shape; Shift constrains, Alt draws from center, Ctrl erases"""
 
     bl_idname = "blix.draw_shape"
     bl_label = "Draw Shape"
@@ -91,6 +92,7 @@ class BLIX_OT_draw_shape(bpy.types.Operator):
 
     _anchor: tuple[int, int]
     _color: np.ndarray
+    _preview_color: np.ndarray
     _coverage: np.ndarray | None
 
     def invoke(
@@ -106,8 +108,9 @@ class BLIX_OT_draw_shape(bpy.types.Operator):
             return {"PASS_THROUGH"}
         x, y = select.mouse_pixel(region, image, event)
         self._anchor = (math.floor(x), math.floor(y))
-        primary, secondary = paint.brush_colors(context)
-        self._color = secondary if event.ctrl else primary
+        primary = paint.brush_colors(context)[0]
+        self._color = paint.TRANSPARENT if event.ctrl else primary
+        self._preview_color = ERASE_PREVIEW if event.ctrl else primary
         self._coverage = None
         self._update(context, image, self._anchor, event)
         window_manager = context.window_manager
@@ -163,7 +166,7 @@ class BLIX_OT_draw_shape(bpy.types.Operator):
         else:
             x0, y0, x1, y1 = bounds
             buffer = np.zeros((y1 - y0, x1 - x0, 4), dtype=np.float32)
-            buffer[coverage[y0:y1, x0:x1]] = self._color
+            buffer[coverage[y0:y1, x0:x1]] = self._preview_color
             preview.set(image, bounds, buffer)
         overlay.tag_redraw(context)
 
@@ -201,7 +204,7 @@ class BLIX_OT_draw_shape(bpy.types.Operator):
         pixels[coverage] = self._color
         undo.record(context, image)
         select.write_pixels(image, pixels)
-        undo.record(context, image, coverage)
+        layers.record_write(context, image, coverage)
         overlay.tag_redraw(context)
 
 
@@ -214,6 +217,7 @@ def _tool_keymap(kind: str) -> tuple[Any, ...]:
             {"type": "LEFTMOUSE", "value": "PRESS", "ctrl": True},
             {"properties": [("kind", kind)]},
         ),
+        palette.POPUP_KEYMAP_ITEM,
     )
 
 

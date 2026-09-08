@@ -254,6 +254,14 @@ def composite(canvas: bpy.types.Image) -> None:
     push_history(canvas)
 
 
+def record_write(context: bpy.types.Context, image: bpy.types.Image, written: np.ndarray) -> None:
+    """Close a bracketed direct write: attribute it to the active layer, recomposite, record."""
+    if len(props.layers(image)):
+        sync_canvas(image, written)
+        composite(image)
+    undo.record(context, image)
+
+
 def _heal(canvas: bpy.types.Image) -> bool:
     """Recomposite after undo moved layer state the canvas no longer matches; pushes no step."""
     pixels = composite_pixels(canvas)
@@ -274,7 +282,15 @@ def _layer_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) ->
         overlay.tag_redraw(context)
 
 
-def _stack_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
+_height_all = False
+
+
+def _height_changed(self: bpy.types.PropertyGroup, context: bpy.types.Context) -> None:
+    layer = cast(Any, self)
+    if _height_all:
+        for other in props.layers(cast(bpy.types.Image, self.id_data)):
+            if other.height != layer.height:
+                other.height = layer.height
     overlay.tag_redraw(context)
 
 
@@ -320,7 +336,12 @@ class BlixLayer(bpy.types.PropertyGroup):
     visible: bpy.props.BoolProperty(name="Visible", default=True, update=_layer_changed)
     lock: bpy.props.BoolProperty(name="Lock", default=False)
     height: bpy.props.IntProperty(
-        name="Height", default=1, min=1, soft_max=16, update=_stack_changed
+        name="Height",
+        description="Slices this layer occupies in the sprite stack; hold Alt to set every layer",
+        default=1,
+        min=1,
+        soft_max=16,
+        update=_height_changed,
     )
     cel: bpy.props.BoolProperty(
         name="Cel", description="Treat this layer as an animation frame", default=True
@@ -660,6 +681,35 @@ class BLIX_OT_stroke_sync(bpy.types.Operator):
         return {"PASS_THROUGH"}
 
 
+class BLIX_OT_height_modifier(bpy.types.Operator):
+    """While Alt stays held, a Height edit applies to every layer of the canvas"""
+
+    bl_idname = "blix.height_modifier"
+    bl_label = "Height Modifier"
+    bl_options = {"INTERNAL"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return resolve_canvas(context) is not None
+
+    def invoke(
+        self, context: bpy.types.Context, event: bpy.types.Event
+    ) -> set[OperatorReturnItems]:
+        global _height_all
+        _height_all = True
+        window_manager = context.window_manager
+        assert window_manager is not None
+        window_manager.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context: bpy.types.Context, event: bpy.types.Event) -> set[OperatorReturnItems]:
+        global _height_all
+        if event.alt:
+            return {"PASS_THROUGH"}
+        _height_all = False
+        return {"FINISHED"}
+
+
 _keymaps: list[tuple[bpy.types.KeyMap, bpy.types.KeyMapItem]] = []
 
 
@@ -676,6 +726,10 @@ def _register_keymap() -> None:
     keymap = keyconfig.keymaps.new(name="Image", space_type="IMAGE_EDITOR")
     item = keymap.keymap_items.new(BLIX_OT_layer_toggle_above.bl_idname, "H", "PRESS")
     _keymaps.append((keymap, item))
+    keymap = keyconfig.keymaps.new(name="Image Generic", space_type="IMAGE_EDITOR")
+    for key in ("LEFT_ALT", "RIGHT_ALT"):
+        item = keymap.keymap_items.new(BLIX_OT_height_modifier.bl_idname, key, "PRESS", any=True)
+        _keymaps.append((keymap, item))
 
 
 def _unregister_keymap() -> None:
@@ -990,6 +1044,7 @@ _classes = (
     BLIX_OT_layers_update,
     BLIX_OT_layer_view_toggle,
     BLIX_OT_layer_toggle_above,
+    BLIX_OT_height_modifier,
 )
 
 
@@ -1008,7 +1063,8 @@ def register() -> None:
 
 
 def unregister() -> None:
-    global _stroke_canvas
+    global _stroke_canvas, _height_all
+    _height_all = False
     _unregister_keymap()
     if bpy.app.timers.is_registered(_stroke_tick):
         bpy.app.timers.unregister(_stroke_tick)

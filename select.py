@@ -1134,7 +1134,33 @@ class BLIX_OT_select_clear(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BLIX_OT_select_invert(bpy.types.Operator):
+    """Invert the selection; with none, select the whole image"""
+
+    bl_idname = "blix.select_invert"
+    bl_label = "Invert Selection"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        image = edit_image(context)
+        return image is not None and image.size[0] > 0 and session.buffer is None
+
+    def execute(self, context: bpy.types.Context) -> set[OperatorReturnItems]:
+        image = edit_image(context)
+        assert image is not None
+        mask = session.mask if session.image_name == image.name else None
+        if mask is None:
+            mask = np.zeros((image.size[1], image.size[0]), dtype=bool)
+        session.reset()
+        session.image_name = image.name
+        session.set_mask(~mask)
+        overlay.tag_redraw(context)
+        return {"FINISHED"}
+
+
 _COMMON_KEYMAP = (
+    ("blix.select_invert", {"type": "I", "value": "PRESS", "ctrl": True}, None),
     ("blix.select_move", {"type": "G", "value": "PRESS"}, None),
     ("blix.select_rotate", {"type": "R", "value": "PRESS"}, None),
     ("blix.select_scale", {"type": "S", "value": "PRESS"}, None),
@@ -1246,6 +1272,7 @@ _classes = (
     BLIX_OT_select_wand,
     BLIX_OT_select_move,
     BLIX_OT_select_clear,
+    BLIX_OT_select_invert,
 )
 
 

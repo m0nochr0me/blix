@@ -113,7 +113,7 @@ def draw_line(
     pixels[coverage] = paint.brush_colors(context)[0]
     undo.record(context, image)
     select.write_pixels(image, pixels)
-    undo.record(context, image, coverage)
+    layers.record_write(context, image, coverage)
 
 
 class BLIX_OT_line_anchor(bpy.types.Operator):
