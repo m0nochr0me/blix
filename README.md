@@ -1,7 +1,7 @@
 # Blix
 
 <br />
-<h1 align="center"><img src="logo.png" alt="Lousy logo drawn in Blix"/></h1>
+<h1 align="center"><img src="logo.png" alt="Nicer logo drawn with Blix"/></h1>
 
 Pixel-art editing tools for the Blender image editor: pixel grid, rulers and guides, box,
 ellipse, lasso, brush and wand selection with boolean modes, RotSprite transforms and a
